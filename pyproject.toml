@@ -12,7 +12,12 @@ license = { text = "MIT" }
 authors = [
   { name = "OpenJ92" }
 ]
-dependencies = []
+dependencies = [
+  "cryptography>=42",
+]
+
+[project.optional-dependencies]
+test = []
 
 [tool.setuptools.packages.find]
 where = ["src"]

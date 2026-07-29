@@ -1,8 +1,4 @@
-"""Package boundary markers for control-plane-kit-secrets.
-
-#1165 intentionally exposes only lightweight ownership facts. Secret storage,
-provider APIs, audit records, and encryption are introduced by later issues.
-"""
+"""Package boundary markers for control-plane-kit-secrets."""
 
 from __future__ import annotations
 

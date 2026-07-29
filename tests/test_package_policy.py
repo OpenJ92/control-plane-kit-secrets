@@ -100,7 +100,7 @@ for name in (
 
         self.assertEqual(completed.returncode, 0, completed.stderr)
 
-    def test_scaffold_does_not_implement_secret_storage_or_api_yet(self) -> None:
+    def test_store_slice_does_not_implement_provider_api_yet(self) -> None:
         source_files = sorted(
             path.relative_to(SRC_ROOT).as_posix()
             for path in SRC_ROOT.rglob("*.py")
@@ -111,6 +111,9 @@ for name in (
             [
                 "__init__.py",
                 "boundaries.py",
+                "crypto.py",
+                "models.py",
+                "store.py",
             ],
         )
 
