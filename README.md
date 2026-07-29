@@ -9,12 +9,12 @@ Interpreters may resolve and materialize values at the IO boundary.
 `control-plane-kit-secrets` is the package that will eventually store encrypted
 secret values, version them, revoke them, and audit provider-local access.
 
-Current status: scaffold only. #1165 intentionally adds no encrypted store, API
-routes, migrations, or provider audit behavior. Those arrive in the following
-issues:
+Current status: encrypted store primitives. #1166 adds provider-local encrypted
+records, versions, rotation, revocation, and tamper-safe load behavior. It does
+not add HTTP routes, authenticated provider transport, or provider-local audit
+yet. Those arrive in the following issues:
 
 ```text
-#1166 encrypted store/version/revocation primitives
 #1167 authenticated scoped provider API
 #1168 provider-local audit and fail-closed policy
 #1169 restart/rotation/revocation acceptance
