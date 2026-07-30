@@ -9,6 +9,7 @@ from pathlib import Path
 from fastapi.testclient import TestClient
 
 from control_plane_kit_secrets.api import create_app
+from control_plane_kit_secrets.audit import AuditUnavailable, SqliteAuditStore
 from control_plane_kit_secrets.auth import ProviderCredential, ProviderGrant
 from control_plane_kit_secrets.crypto import encode_master_key_for_file, load_master_key_file
 from control_plane_kit_secrets.store import EncryptedSecretStore
@@ -30,6 +31,7 @@ class ProviderApiTests(unittest.TestCase):
             self.assertEqual(response.status_code, 200, response.text)
             self.assertEqual(response.json()["outcome"], "stored")
             self.assertNotIn(sentinel.decode("ascii"), response.text)
+            self.assertNotIn(sentinel.decode("ascii"), repr(fixture.audit_rows()))
 
             metadata = fixture.client.get(
                 "/v1/workspaces/workspace-1/secrets/cloudflare-token/metadata",
@@ -40,6 +42,10 @@ class ProviderApiTests(unittest.TestCase):
             self.assertEqual(metadata.json()["metadata"]["secret_id"], "cloudflare-token")
             self.assertNotIn("value_base64", metadata.text)
             self.assertNotIn(sentinel.decode("ascii"), metadata.text)
+            self.assertEqual(
+                [row["outcome"] for row in fixture.audit_rows()],
+                ["stored", "metadata"],
+            )
 
     def test_resolve_requires_authentication_scope_and_intent(self) -> None:
         with _client() as fixture:
@@ -82,6 +88,11 @@ class ProviderApiTests(unittest.TestCase):
                 base64.b64decode(resolved.json()["value_base64"]),
                 b"gateway-signing-key",
             )
+            self.assertEqual(
+                [row["outcome"] for row in fixture.audit_rows()],
+                ["stored", "denied", "denied", "denied", "resolved"],
+            )
+            self.assertNotIn("gateway-signing-key", repr(fixture.audit_rows()))
 
     def test_execution_permission_does_not_grant_secret_resolution(self) -> None:
         with _client() as fixture:
@@ -100,6 +111,22 @@ class ProviderApiTests(unittest.TestCase):
 
             self.assertEqual(response.status_code, 403)
             self.assertNotIn("postgres-password", response.text)
+            self.assertIn("denied", [row["outcome"] for row in fixture.audit_rows()])
+
+    def test_missing_resolve_is_audited_and_bounded(self) -> None:
+        with _client() as fixture:
+            response = fixture.client.post(
+                "/v1/workspaces/workspace-1/secrets/missing/resolve",
+                headers=fixture.headers("oci-resolver-token"),
+                json=_resolve_body("oci.pull-credential"),
+            )
+
+            self.assertEqual(response.status_code, 404)
+            self.assertEqual(response.json()["detail"]["outcome"], "missing")
+            self.assertEqual(
+                [row["outcome"] for row in fixture.audit_rows()],
+                ["missing"],
+            )
 
     def test_rotate_revoke_and_revoked_resolve_are_bounded(self) -> None:
         with _client() as fixture:
@@ -133,6 +160,10 @@ class ProviderApiTests(unittest.TestCase):
             )
             self.assertEqual(resolved.status_code, 409)
             self.assertNotIn("new-oci-token", resolved.text)
+            self.assertEqual(
+                [row["outcome"] for row in fixture.audit_rows()],
+                ["stored", "rotated", "revoked", "revoked", "revoked"],
+            )
 
     def test_malformed_oversized_and_unsupported_intent_are_bounded(self) -> None:
         with _client() as fixture:
@@ -164,6 +195,7 @@ class ProviderApiTests(unittest.TestCase):
                 json=_resolve_body("freeform.give-me-string"),
             )
             self.assertEqual(unsupported_intent.status_code, 400)
+            self.assertIn("malformed", [row["outcome"] for row in fixture.audit_rows()])
 
     def test_duplicate_write_is_bounded_and_redacted(self) -> None:
         with _client() as fixture:
@@ -182,10 +214,33 @@ class ProviderApiTests(unittest.TestCase):
             self.assertEqual(response.status_code, 409)
             self.assertEqual(response.json()["detail"]["outcome"], "already-exists")
             self.assertNotIn("second-secret-value", response.text)
+            self.assertIn("already-exists", [row["outcome"] for row in fixture.audit_rows()])
+
+    def test_audit_failure_blocks_resolve_material(self) -> None:
+        with _client(audit_store_factory=lambda _path: _FailingAuditStore()) as fixture:
+            fixture.store.create_secret(
+                workspace_id="workspace-1",
+                secret_id="gateway-key",
+                value=b"gateway-signing-key",
+            )
+
+            response = fixture.client.post(
+                "/v1/workspaces/workspace-1/secrets/gateway-key/resolve",
+                headers=fixture.headers("resolver-token"),
+                json=_resolve_body("gateway.probe-signing-key"),
+            )
+
+            self.assertEqual(response.status_code, 503)
+            self.assertEqual(response.json()["detail"]["code"], "audit-unavailable")
+            self.assertNotIn("gateway-signing-key", response.text)
 
 
 class _ApiFixture:
-    def __init__(self) -> None:
+    def __init__(
+        self,
+        *,
+        audit_store_factory: object | None = None,
+    ) -> None:
         self._directory = tempfile.TemporaryDirectory()
         base = Path(self._directory.name)
         key_path = base / "master.key"
@@ -198,9 +253,16 @@ class _ApiFixture:
             master_key=load_master_key_file(key_path, version="test"),
         )
         store.initialize()
+        self.store = store
+        if audit_store_factory is None:
+            self.audit_store = SqliteAuditStore(base / "secrets.sqlite3")
+        else:
+            self.audit_store = audit_store_factory(base / "secrets.sqlite3")
+        self.audit_store.initialize()
         self.client = TestClient(
             create_app(
                 store=store,
+                audit_store=self.audit_store,
                 credentials=(
                     ProviderCredential(
                         subject="writer",
@@ -288,9 +350,23 @@ class _ApiFixture:
         )
         assert response.status_code == 200, response.text
 
+    def audit_rows(self) -> list[dict[str, object]]:
+        return self.audit_store.rows_for_tests()
 
-def _client() -> _ApiFixture:
-    return _ApiFixture()
+
+def _client(*, audit_store_factory: object | None = None) -> _ApiFixture:
+    return _ApiFixture(audit_store_factory=audit_store_factory)
+
+
+class _FailingAuditStore:
+    def initialize(self) -> None:
+        return None
+
+    def append(self, record: object) -> None:
+        raise AuditUnavailable()
+
+    def rows_for_tests(self) -> list[dict[str, object]]:
+        return []
 
 
 def _b64(value: bytes) -> str:

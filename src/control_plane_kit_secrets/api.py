@@ -7,6 +7,7 @@ from typing import Any
 from fastapi import Depends, FastAPI, Header, HTTPException
 from pydantic import BaseModel, Field
 
+from .audit import AuditUnavailable, SqliteAuditStore, audit_record
 from .auth import (
     ProviderAuthenticationError,
     ProviderAuthorizer,
@@ -45,11 +46,15 @@ ALLOWED_SECRET_USE_INTENTS = frozenset(
 class SecretWriteRequest(BaseModel):
     value_base64: str = Field(min_length=1)
     labels: dict[str, str] = Field(default_factory=dict)
+    caller_subject: str | None = Field(default=None, max_length=128)
+    correlation_id: str | None = Field(default=None, max_length=MAX_CORRELATION_CHARS)
 
 
 class SecretRotateRequest(BaseModel):
     value_base64: str = Field(min_length=1)
     labels: dict[str, str] = Field(default_factory=dict)
+    caller_subject: str | None = Field(default=None, max_length=128)
+    correlation_id: str | None = Field(default=None, max_length=MAX_CORRELATION_CHARS)
 
 
 class SecretResolveRequest(BaseModel):
@@ -62,7 +67,9 @@ class SecretResolveRequest(BaseModel):
 def create_app(
     *,
     store: EncryptedSecretStore,
+    audit_store: SqliteAuditStore,
     credentials: tuple[ProviderCredential, ...],
+    provider_id: str = "local-dev-provider",
 ) -> FastAPI:
     authorizer = ProviderAuthorizer(credentials)
     app = FastAPI(title="control-plane-kit-secrets")
@@ -91,20 +98,52 @@ def create_app(
         _require(authorizer, client, action="secret.write", workspace_id=workspace_id)
         value = _decode_secret_value(request.value_base64)
         try:
-            return {
-                "outcome": "stored",
-                "metadata": _metadata_response(
-                    store.create_secret(
-                        workspace_id=workspace_id,
-                        secret_id=secret_id,
-                        value=value,
-                        labels=request.labels,
-                    )
-                ),
-            }
+            metadata = store.create_secret(
+                workspace_id=workspace_id,
+                secret_id=secret_id,
+                value=value,
+                labels=request.labels,
+            )
+            _append_audit(
+                audit_store,
+                provider_id=provider_id,
+                workspace_id=workspace_id,
+                secret_id=secret_id,
+                version_id=metadata.version_id,
+                intent=None,
+                caller_subject=request.caller_subject or client.subject,
+                correlation_id=request.correlation_id or "not-provided",
+                outcome="stored",
+                code="secret-stored",
+            )
+            return {"outcome": "stored", "metadata": _metadata_response(metadata)}
         except SecretMetadataInvalid as exc:
+            _append_audit(
+                audit_store,
+                provider_id=provider_id,
+                workspace_id=workspace_id,
+                secret_id=secret_id,
+                version_id=None,
+                intent=None,
+                caller_subject=request.caller_subject or client.subject,
+                correlation_id=request.correlation_id or "not-provided",
+                outcome="malformed",
+                code="invalid-metadata",
+            )
             raise _error(400, "malformed", "invalid-metadata") from exc
         except SecretAlreadyExists as exc:
+            _append_audit(
+                audit_store,
+                provider_id=provider_id,
+                workspace_id=workspace_id,
+                secret_id=secret_id,
+                version_id=None,
+                intent=None,
+                caller_subject=request.caller_subject or client.subject,
+                correlation_id=request.correlation_id or "not-provided",
+                outcome="already-exists",
+                code="secret-already-exists",
+            )
             raise _error(409, "already-exists", "secret-already-exists") from exc
 
     @app.post("/v1/workspaces/{workspace_id}/secrets/{secret_id}/rotate")
@@ -123,12 +162,60 @@ def create_app(
                 value=value,
                 labels=request.labels,
             )
+            _append_audit(
+                audit_store,
+                provider_id=provider_id,
+                workspace_id=workspace_id,
+                secret_id=secret_id,
+                version_id=metadata.version_id,
+                intent=None,
+                caller_subject=request.caller_subject or client.subject,
+                correlation_id=request.correlation_id or "not-provided",
+                outcome="rotated",
+                code="secret-rotated",
+            )
             return {"outcome": "rotated", "metadata": _metadata_response(metadata)}
         except SecretMissing as exc:
+            _append_audit(
+                audit_store,
+                provider_id=provider_id,
+                workspace_id=workspace_id,
+                secret_id=secret_id,
+                version_id=None,
+                intent=None,
+                caller_subject=request.caller_subject or client.subject,
+                correlation_id=request.correlation_id or "not-provided",
+                outcome="missing",
+                code="secret-missing",
+            )
             raise _error(404, "missing", "secret-missing") from exc
         except SecretMetadataInvalid as exc:
+            _append_audit(
+                audit_store,
+                provider_id=provider_id,
+                workspace_id=workspace_id,
+                secret_id=secret_id,
+                version_id=None,
+                intent=None,
+                caller_subject=request.caller_subject or client.subject,
+                correlation_id=request.correlation_id or "not-provided",
+                outcome="malformed",
+                code="invalid-metadata",
+            )
             raise _error(400, "malformed", "invalid-metadata") from exc
         except SecretAlreadyExists as exc:
+            _append_audit(
+                audit_store,
+                provider_id=provider_id,
+                workspace_id=workspace_id,
+                secret_id=secret_id,
+                version_id=None,
+                intent=None,
+                caller_subject=request.caller_subject or client.subject,
+                correlation_id=request.correlation_id or "not-provided",
+                outcome="already-exists",
+                code="secret-version-conflict",
+            )
             raise _error(409, "already-exists", "secret-version-conflict") from exc
 
     @app.post("/v1/workspaces/{workspace_id}/secrets/{secret_id}/resolve")
@@ -136,21 +223,79 @@ def create_app(
         workspace_id: str,
         secret_id: str,
         request: SecretResolveRequest,
-        client: ProviderCredential = Depends(credential),
+        authorization: str | None = Header(default=None),
     ) -> dict[str, Any]:
-        _validate_intent(request.intent)
-        _require(
-            authorizer,
-            client,
-            action="secret.resolve",
-            workspace_id=workspace_id,
-            intent=request.intent,
-        )
+        try:
+            client = authorizer.authenticate(authorization)
+        except ProviderAuthenticationError as exc:
+            _append_resolve_audit(
+                audit_store,
+                provider_id=provider_id,
+                workspace_id=workspace_id,
+                secret_id=secret_id,
+                version_id=request.version_id,
+                intent=request.intent,
+                caller_subject="unauthenticated",
+                correlation_id=request.correlation_id,
+                outcome="denied",
+                code="unauthenticated",
+            )
+            raise _error(401, "denied", "unauthenticated") from exc
+        try:
+            _validate_intent(request.intent)
+        except HTTPException as exc:
+            _append_resolve_audit(
+                audit_store,
+                provider_id=provider_id,
+                workspace_id=workspace_id,
+                secret_id=secret_id,
+                version_id=request.version_id,
+                intent=request.intent,
+                caller_subject=request.caller_subject,
+                correlation_id=request.correlation_id,
+                outcome="malformed",
+                code="unsupported-intent",
+            )
+            raise exc
+        try:
+            _require(
+                authorizer,
+                client,
+                action="secret.resolve",
+                workspace_id=workspace_id,
+                intent=request.intent,
+            )
+        except HTTPException as exc:
+            _append_resolve_audit(
+                audit_store,
+                provider_id=provider_id,
+                workspace_id=workspace_id,
+                secret_id=secret_id,
+                version_id=request.version_id,
+                intent=request.intent,
+                caller_subject=request.caller_subject,
+                correlation_id=request.correlation_id,
+                outcome="denied",
+                code="insufficient-scope",
+            )
+            raise exc
         try:
             resolved = store.resolve_secret(
                 workspace_id=workspace_id,
                 secret_id=secret_id,
                 version_id=request.version_id,
+            )
+            _append_resolve_audit(
+                audit_store,
+                provider_id=provider_id,
+                workspace_id=workspace_id,
+                secret_id=secret_id,
+                version_id=resolved.metadata.version_id,
+                intent=request.intent,
+                caller_subject=request.caller_subject,
+                correlation_id=request.correlation_id,
+                outcome="resolved",
+                code="secret-resolved",
             )
             return {
                 "outcome": "resolved",
@@ -158,10 +303,46 @@ def create_app(
                 "value_base64": base64.b64encode(resolved.value).decode("ascii"),
             }
         except SecretMissing as exc:
+            _append_resolve_audit(
+                audit_store,
+                provider_id=provider_id,
+                workspace_id=workspace_id,
+                secret_id=secret_id,
+                version_id=request.version_id,
+                intent=request.intent,
+                caller_subject=request.caller_subject,
+                correlation_id=request.correlation_id,
+                outcome="missing",
+                code="secret-missing",
+            )
             raise _error(404, "missing", "secret-missing") from exc
         except SecretRevoked as exc:
+            _append_resolve_audit(
+                audit_store,
+                provider_id=provider_id,
+                workspace_id=workspace_id,
+                secret_id=secret_id,
+                version_id=request.version_id,
+                intent=request.intent,
+                caller_subject=request.caller_subject,
+                correlation_id=request.correlation_id,
+                outcome="revoked",
+                code="secret-revoked",
+            )
             raise _error(409, "revoked", "secret-revoked") from exc
         except SecretTampered as exc:
+            _append_resolve_audit(
+                audit_store,
+                provider_id=provider_id,
+                workspace_id=workspace_id,
+                secret_id=secret_id,
+                version_id=request.version_id,
+                intent=request.intent,
+                caller_subject=request.caller_subject,
+                correlation_id=request.correlation_id,
+                outcome="unavailable",
+                code="integrity-failure",
+            )
             raise _error(503, "unavailable", "integrity-failure") from exc
 
     @app.post("/v1/workspaces/{workspace_id}/secrets/{secret_id}/revoke")
@@ -173,13 +354,50 @@ def create_app(
         _require(authorizer, client, action="secret.revoke", workspace_id=workspace_id)
         try:
             revoked = store.revoke_secret(workspace_id=workspace_id, secret_id=secret_id)
+            for metadata in revoked:
+                _append_audit(
+                    audit_store,
+                    provider_id=provider_id,
+                    workspace_id=workspace_id,
+                    secret_id=secret_id,
+                    version_id=metadata.version_id,
+                    intent=None,
+                    caller_subject=client.subject,
+                    correlation_id="not-provided",
+                    outcome="revoked",
+                    code="secret-revoked",
+                )
             return {
                 "outcome": "revoked",
                 "metadata": [_metadata_response(metadata) for metadata in revoked],
             }
         except SecretMissing as exc:
+            _append_audit(
+                audit_store,
+                provider_id=provider_id,
+                workspace_id=workspace_id,
+                secret_id=secret_id,
+                version_id=None,
+                intent=None,
+                caller_subject=client.subject,
+                correlation_id="not-provided",
+                outcome="missing",
+                code="secret-missing",
+            )
             raise _error(404, "missing", "secret-missing") from exc
         except SecretTampered as exc:
+            _append_audit(
+                audit_store,
+                provider_id=provider_id,
+                workspace_id=workspace_id,
+                secret_id=secret_id,
+                version_id=None,
+                intent=None,
+                caller_subject=client.subject,
+                correlation_id="not-provided",
+                outcome="unavailable",
+                code="integrity-failure",
+            )
             raise _error(503, "unavailable", "integrity-failure") from exc
 
     @app.get("/v1/workspaces/{workspace_id}/secrets/{secret_id}/metadata")
@@ -196,8 +414,32 @@ def create_app(
                 secret_id=secret_id,
                 version_id=version_id,
             )
+            _append_audit(
+                audit_store,
+                provider_id=provider_id,
+                workspace_id=workspace_id,
+                secret_id=secret_id,
+                version_id=metadata.version_id,
+                intent=None,
+                caller_subject=client.subject,
+                correlation_id="not-provided",
+                outcome="metadata",
+                code="metadata-read",
+            )
             return {"outcome": "metadata", "metadata": _metadata_response(metadata)}
         except SecretMissing as exc:
+            _append_audit(
+                audit_store,
+                provider_id=provider_id,
+                workspace_id=workspace_id,
+                secret_id=secret_id,
+                version_id=version_id,
+                intent=None,
+                caller_subject=client.subject,
+                correlation_id="not-provided",
+                outcome="missing",
+                code="secret-missing",
+            )
             raise _error(404, "missing", "secret-missing") from exc
 
     return app
@@ -251,6 +493,64 @@ def _require(
         )
     except SecretUseDenied as exc:
         raise _error(403, "denied", "insufficient-scope") from exc
+
+
+def _append_resolve_audit(
+    audit_store: SqliteAuditStore,
+    *,
+    provider_id: str,
+    workspace_id: str,
+    secret_id: str,
+    version_id: str | None,
+    intent: str | None,
+    caller_subject: str,
+    correlation_id: str,
+    outcome: str,
+    code: str,
+) -> None:
+    _append_audit(
+        audit_store,
+        provider_id=provider_id,
+        workspace_id=workspace_id,
+        secret_id=secret_id,
+        version_id=version_id,
+        intent=intent,
+        caller_subject=caller_subject,
+        correlation_id=correlation_id,
+        outcome=outcome,
+        code=code,
+    )
+
+
+def _append_audit(
+    audit_store: SqliteAuditStore,
+    *,
+    provider_id: str,
+    workspace_id: str,
+    secret_id: str,
+    version_id: str | None,
+    intent: str | None,
+    caller_subject: str,
+    correlation_id: str,
+    outcome: str,
+    code: str,
+) -> None:
+    try:
+        audit_store.append(
+            audit_record(
+                provider_id=provider_id,
+                workspace_id=workspace_id,
+                secret_id=secret_id,
+                version_id=version_id,
+                intent=intent,
+                caller_subject=caller_subject,
+                correlation_id=correlation_id,
+                outcome=outcome,
+                code=code,
+            )
+        )
+    except AuditUnavailable as exc:
+        raise _error(503, "unavailable", "audit-unavailable") from exc
 
 
 def _error(status_code: int, outcome: str, code: str) -> HTTPException:
