@@ -9,15 +9,33 @@ Interpreters may resolve and materialize values at the IO boundary.
 `control-plane-kit-secrets` is the package that will eventually store encrypted
 secret values, version them, revoke them, and audit provider-local access.
 
-Current status: authenticated scoped provider API. #1166 added provider-local
-encrypted records, versions, rotation, revocation, and tamper-safe load
-behavior. #1167 adds a narrow FastAPI boundary for authenticated write, resolve,
-rotate, revoke, and metadata operations. Provider-local audit is still deferred.
+Current status: provider-local audit. #1166 added provider-local encrypted
+records, versions, rotation, revocation, and tamper-safe load behavior. #1167
+added a narrow FastAPI boundary for authenticated write, resolve, rotate,
+revoke, and metadata operations. #1168 adds provider-local audit records and
+fail-closed resolve behavior when audit persistence is unavailable.
 
 ```text
-#1168 provider-local audit and fail-closed policy
 #1169 restart/rotation/revocation acceptance
 ```
+
+## Backup And Key-Rotation Notes
+
+First flight uses two pieces of durable custody:
+
+```text
+encrypted provider database
+mounted master-key file
+```
+
+Back up both. The database without the master-key file is intentionally not
+enough to recover secret values. The master-key file without the database is not
+enough to recover version history, revocation state, metadata, or audit records.
+
+The provider stores only key fingerprint and key-version evidence in the
+database. It does not store the raw master key. Future key rotation should add
+an explicit rewrap or new-version flow; it must not silently change the key used
+to decrypt existing ciphertext.
 
 ## Boundary
 

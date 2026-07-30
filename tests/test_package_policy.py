@@ -110,7 +110,7 @@ for name in (
 
         self.assertEqual(completed.returncode, 0, completed.stderr)
 
-    def test_api_slice_does_not_implement_audit_or_process_entrypoint_yet(self) -> None:
+    def test_api_slice_does_not_implement_process_entrypoint_yet(self) -> None:
         source_files = sorted(
             path.relative_to(SRC_ROOT).as_posix()
             for path in SRC_ROOT.rglob("*.py")
@@ -121,6 +121,7 @@ for name in (
             [
                 "__init__.py",
                 "api.py",
+                "audit.py",
                 "auth.py",
                 "boundaries.py",
                 "crypto.py",
