@@ -19,6 +19,7 @@ from .models import (
     SecretMetadata,
     SecretMetadataInvalid,
     SecretMissing,
+    SecretResolutionConflict,
     SecretRevoked,
     SecretTampered,
 )
@@ -285,9 +286,12 @@ def create_app(
             )
             raise exc
         try:
-            resolved = store.resolve_secret(
+            resolved = store.resolve_secret_for_use(
                 workspace_id=workspace_id,
                 secret_id=secret_id,
+                intent=request.intent,
+                caller_subject=request.caller_subject,
+                correlation_id=request.correlation_id,
                 version_id=request.version_id,
             )
             _append_resolve_audit(
@@ -335,6 +339,24 @@ def create_app(
                 code="secret-revoked",
             )
             raise _error(409, "revoked", "secret-revoked") from exc
+        except SecretResolutionConflict as exc:
+            _append_resolve_audit(
+                audit_store,
+                provider_id=provider_id,
+                workspace_id=workspace_id,
+                secret_id=secret_id,
+                version_id=request.version_id,
+                intent=request.intent,
+                caller_subject=request.caller_subject,
+                correlation_id=request.correlation_id,
+                outcome="already-exists",
+                code="resolution-correlation-conflict",
+            )
+            raise _error(
+                409,
+                "already-exists",
+                "resolution-correlation-conflict",
+            ) from exc
         except SecretTampered as exc:
             _append_resolve_audit(
                 audit_store,

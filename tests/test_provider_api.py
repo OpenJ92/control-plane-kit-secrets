@@ -186,6 +186,68 @@ class ProviderApiTests(unittest.TestCase):
                 ["stored", "rotated", "revoked", "revoked", "revoked"],
             )
 
+    def test_resolve_correlation_pins_version_and_rejects_semantic_reuse(
+        self,
+    ) -> None:
+        with _client() as fixture:
+            fixture.write_secret(
+                token="writer-token",
+                workspace_id="workspace-1",
+                secret_id="oci-token",
+                value=b"version-a",
+            )
+            first = fixture.client.post(
+                "/v1/workspaces/workspace-1/secrets/oci-token/resolve",
+                headers=fixture.headers("oci-resolver-token"),
+                json=_resolve_body("oci.pull-credential"),
+            )
+            rotated = fixture.client.post(
+                "/v1/workspaces/workspace-1/secrets/oci-token/rotate",
+                headers=fixture.headers("rotate-token"),
+                json={"value_base64": _b64(b"version-b"), "labels": {}},
+            )
+            replay = fixture.client.post(
+                "/v1/workspaces/workspace-1/secrets/oci-token/resolve",
+                headers=fixture.headers("oci-resolver-token"),
+                json=_resolve_body("oci.pull-credential"),
+            )
+            next_effect = fixture.client.post(
+                "/v1/workspaces/workspace-1/secrets/oci-token/resolve",
+                headers=fixture.headers("oci-resolver-token"),
+                json={
+                    **_resolve_body("oci.pull-credential"),
+                    "correlation_id": "operation-session-2",
+                },
+            )
+            mismatch = fixture.client.post(
+                "/v1/workspaces/workspace-1/secrets/oci-token/resolve",
+                headers=fixture.headers("oci-resolver-token"),
+                json={
+                    **_resolve_body("oci.pull-credential"),
+                    "caller_subject": "another-worker",
+                },
+            )
+
+            self.assertEqual(first.status_code, 200, first.text)
+            self.assertEqual(rotated.status_code, 200, rotated.text)
+            self.assertEqual(replay.status_code, 200, replay.text)
+            self.assertEqual(next_effect.status_code, 200, next_effect.text)
+            self.assertEqual(
+                replay.json()["metadata"]["version_id"],
+                first.json()["metadata"]["version_id"],
+            )
+            self.assertEqual(
+                next_effect.json()["metadata"]["version_id"],
+                rotated.json()["metadata"]["version_id"],
+            )
+            self.assertEqual(mismatch.status_code, 409, mismatch.text)
+            self.assertEqual(
+                mismatch.json()["detail"]["code"],
+                "resolution-correlation-conflict",
+            )
+            self.assertNotIn("version-a", repr(fixture.audit_rows()))
+            self.assertNotIn("version-b", repr(fixture.audit_rows()))
+
     def test_revoke_remains_compatible_without_a_request_body(self) -> None:
         with _client() as fixture:
             fixture.write_secret(
