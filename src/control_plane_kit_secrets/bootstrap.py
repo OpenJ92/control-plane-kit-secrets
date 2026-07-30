@@ -1,12 +1,13 @@
 from __future__ import annotations
 
 import json
-import os
-from pathlib import Path
-import stat
 from typing import Any, Mapping
 
 from .auth import ProviderCredential, ProviderGrant
+from .bootstrap_files import (
+    ProtectedBootstrapFileError,
+    read_protected_bootstrap_file,
+)
 
 
 _MAXIMUM_CREDENTIAL_FILE_BYTES = 64 * 1024
@@ -33,39 +34,14 @@ def load_provider_credentials(
 
 
 def _credentials_from_file(path_value: str) -> tuple[ProviderCredential, ...]:
-    descriptor: int | None = None
     try:
-        path = Path(path_value)
-        if not path.is_absolute():
-            raise ValueError
-        descriptor = os.open(
-            path,
-            os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0),
+        payload = read_protected_bootstrap_file(
+            path_value,
+            maximum_bytes=_MAXIMUM_CREDENTIAL_FILE_BYTES,
         )
-        metadata = os.fstat(descriptor)
-        if (
-            not stat.S_ISREG(metadata.st_mode)
-            or metadata.st_mode & 0o077
-            or not 0 < metadata.st_size <= _MAXIMUM_CREDENTIAL_FILE_BYTES
-        ):
-            raise ValueError
-        chunks: list[bytes] = []
-        remaining = _MAXIMUM_CREDENTIAL_FILE_BYTES + 1
-        while remaining:
-            chunk = os.read(descriptor, remaining)
-            if not chunk:
-                break
-            chunks.append(chunk)
-            remaining -= len(chunk)
-        payload = b"".join(chunks)
-        if len(payload) != metadata.st_size:
-            raise ValueError
         return _credentials_from_json(payload.decode("utf-8"))
-    except Exception as exc:
+    except (ProtectedBootstrapFileError, UnicodeDecodeError) as exc:
         raise ProviderConfigurationError() from exc
-    finally:
-        if descriptor is not None:
-            os.close(descriptor)
 
 
 def _credentials_from_json(payload: str) -> tuple[ProviderCredential, ...]:
