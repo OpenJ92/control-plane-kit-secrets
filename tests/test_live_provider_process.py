@@ -27,13 +27,9 @@ class LiveProviderProcessTests(unittest.TestCase):
             key_path.write_text(encode_master_key_for_file(key_bytes), encoding="utf-8")
             token = "provider-token-for-live-test"
             denied_token = "metadata-only-token"
-            port = _free_port()
-            environment = {
-                **os.environ,
-                "CPK_SECRETS_DATABASE_PATH": str(db_path),
-                "CPK_SECRETS_MASTER_KEY_FILE": str(key_path),
-                "CPK_SECRETS_PROVIDER_ID": "provider-live",
-                "CPK_SECRETS_DEVELOPMENT_CREDENTIALS_JSON": json.dumps(
+            credentials_path = base / "provider-credentials.json"
+            credentials_path.write_text(
+                json.dumps(
                     [
                         {
                             "subject": "provider-client",
@@ -60,6 +56,16 @@ class LiveProviderProcessTests(unittest.TestCase):
                     ],
                     sort_keys=True,
                 ),
+                encoding="utf-8",
+            )
+            credentials_path.chmod(0o600)
+            port = _free_port()
+            environment = {
+                **os.environ,
+                "CPK_SECRETS_DATABASE_PATH": str(db_path),
+                "CPK_SECRETS_MASTER_KEY_FILE": str(key_path),
+                "CPK_SECRETS_PROVIDER_ID": "provider-live",
+                "CPK_SECRETS_CREDENTIALS_FILE": str(credentials_path),
             }
 
             process = _start_provider(port=port, environment=environment)

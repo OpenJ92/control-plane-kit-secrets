@@ -91,13 +91,16 @@ class EncryptedSecretStore:
         value: bytes,
         labels: dict[str, str] | None = None,
     ) -> SecretMetadata:
-        return self._insert_version(
-            workspace_id=workspace_id,
-            secret_id=secret_id,
-            value=value,
-            labels=labels or {},
-            version_number=1,
-        )
+        with self._connection() as connection:
+            connection.execute("BEGIN IMMEDIATE")
+            return self._insert_version(
+                connection,
+                workspace_id=workspace_id,
+                secret_id=secret_id,
+                value=value,
+                labels=labels or {},
+                version_number=1,
+            )
 
     def rotate_secret(
         self,
@@ -108,23 +111,26 @@ class EncryptedSecretStore:
         labels: dict[str, str] | None = None,
     ) -> SecretMetadata:
         with self._connection() as connection:
+            connection.execute("BEGIN IMMEDIATE")
             latest = self._latest_row(
                 connection, workspace_id=workspace_id, secret_id=secret_id
             )
             if latest is None:
                 raise SecretMissing()
             next_number = int(latest["version_number"]) + 1
-        return self._insert_version(
-            workspace_id=workspace_id,
-            secret_id=secret_id,
-            value=value,
-            labels=labels or {},
-            version_number=next_number,
-        )
+            return self._insert_version(
+                connection,
+                workspace_id=workspace_id,
+                secret_id=secret_id,
+                value=value,
+                labels=labels or {},
+                version_number=next_number,
+            )
 
     def revoke_secret(self, *, workspace_id: str, secret_id: str) -> list[SecretMetadata]:
         revoked: list[SecretMetadata] = []
         with self._connection() as connection:
+            connection.execute("BEGIN IMMEDIATE")
             rows = self._all_rows(
                 connection, workspace_id=workspace_id, secret_id=secret_id
             )
@@ -312,6 +318,7 @@ class EncryptedSecretStore:
 
     def _insert_version(
         self,
+        connection: sqlite3.Connection,
         *,
         workspace_id: str,
         secret_id: str,
@@ -339,32 +346,31 @@ class EncryptedSecretStore:
             aad=self._aad(metadata),
         )
         try:
-            with self._connection() as connection:
-                connection.execute(
-                    """
-                    INSERT INTO secret_versions (
-                        workspace_id, secret_id, version_id, version_number, status,
-                        algorithm, key_fingerprint, key_version, nonce, ciphertext,
-                        labels_json, created_at, revoked_at
-                    )
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                    """,
-                    (
-                        metadata.workspace_id,
-                        metadata.secret_id,
-                        metadata.version_id,
-                        metadata.version_number,
-                        metadata.status.value,
-                        metadata.algorithm,
-                        metadata.key_fingerprint,
-                        metadata.key_version,
-                        nonce,
-                        ciphertext,
-                        json.dumps(dict(metadata.labels), sort_keys=True),
-                        metadata.created_at,
-                        metadata.revoked_at,
-                    ),
+            connection.execute(
+                """
+                INSERT INTO secret_versions (
+                    workspace_id, secret_id, version_id, version_number, status,
+                    algorithm, key_fingerprint, key_version, nonce, ciphertext,
+                    labels_json, created_at, revoked_at
                 )
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    metadata.workspace_id,
+                    metadata.secret_id,
+                    metadata.version_id,
+                    metadata.version_number,
+                    metadata.status.value,
+                    metadata.algorithm,
+                    metadata.key_fingerprint,
+                    metadata.key_version,
+                    nonce,
+                    ciphertext,
+                    json.dumps(dict(metadata.labels), sort_keys=True),
+                    metadata.created_at,
+                    metadata.revoked_at,
+                ),
+            )
         except sqlite3.IntegrityError as exc:
             raise SecretAlreadyExists() from exc
         return metadata
@@ -484,9 +490,10 @@ class EncryptedSecretStore:
 
     def _connect(self) -> sqlite3.Connection:
         self._database_path.parent.mkdir(parents=True, exist_ok=True)
-        connection = sqlite3.connect(self._database_path)
+        connection = sqlite3.connect(self._database_path, timeout=5.0)
         connection.row_factory = sqlite3.Row
         connection.execute("PRAGMA foreign_keys = ON")
+        connection.execute("PRAGMA busy_timeout = 5000")
         return connection
 
     @contextmanager

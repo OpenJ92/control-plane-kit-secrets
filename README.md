@@ -26,11 +26,18 @@ First flight uses two pieces of durable custody:
 ```text
 encrypted provider database
 mounted master-key file
+mounted provider-credentials file
 ```
 
 Back up both. The database without the master-key file is intentionally not
 enough to recover secret values. The master-key file without the database is not
 enough to recover version history, revocation state, metadata, or audit records.
+
+Production provider credentials are loaded from the absolute owner-only path in
+`CPK_SECRETS_CREDENTIALS_FILE`. The explicitly development-only
+`CPK_SECRETS_DEVELOPMENT_CREDENTIALS_JSON` setting remains for disposable source
+fixtures; configure exactly one source. Provider credentials are bootstrap
+roots and must not resolve recursively through this provider.
 
 The provider stores only key fingerprint and key-version evidence in the
 database. It does not store the raw master key. Future key rotation should add
