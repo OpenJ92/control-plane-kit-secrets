@@ -20,6 +20,11 @@ class SecretMissing(SecretStoreError):
         super().__init__("secret reference is missing")
 
 
+class SecretAlreadyExists(SecretStoreError):
+    def __init__(self) -> None:
+        super().__init__("secret reference already exists")
+
+
 class SecretRevoked(SecretStoreError):
     def __init__(self) -> None:
         super().__init__("secret reference is revoked")

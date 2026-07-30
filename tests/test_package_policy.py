@@ -58,7 +58,6 @@ class PackagePolicyTests(unittest.TestCase):
             "control_plane_kit_servers",
             "control_plane_kit_servers_cpk_server",
             "docker",
-            "fastapi",
             "httpx",
             "psycopg",
             "sqlalchemy",
@@ -69,6 +68,17 @@ class PackagePolicyTests(unittest.TestCase):
             overlap = imported_roots(path) & forbidden
             for name in sorted(overlap):
                 findings.append(f"{path.relative_to(REPO_ROOT)} imports {name}")
+
+        self.assertEqual(findings, [])
+
+    def test_fastapi_is_isolated_to_provider_api_boundary(self) -> None:
+        findings: list[str] = []
+        allowed = SRC_ROOT / "api.py"
+        for path in sorted(SRC_ROOT.rglob("*.py")):
+            overlap = imported_roots(path) & {"fastapi"}
+            for name in sorted(overlap):
+                if path != allowed:
+                    findings.append(f"{path.relative_to(REPO_ROOT)} imports {name}")
 
         self.assertEqual(findings, [])
 
@@ -100,7 +110,7 @@ for name in (
 
         self.assertEqual(completed.returncode, 0, completed.stderr)
 
-    def test_store_slice_does_not_implement_provider_api_yet(self) -> None:
+    def test_api_slice_does_not_implement_audit_or_process_entrypoint_yet(self) -> None:
         source_files = sorted(
             path.relative_to(SRC_ROOT).as_posix()
             for path in SRC_ROOT.rglob("*.py")
@@ -110,6 +120,8 @@ for name in (
             source_files,
             [
                 "__init__.py",
+                "api.py",
+                "auth.py",
                 "boundaries.py",
                 "crypto.py",
                 "models.py",

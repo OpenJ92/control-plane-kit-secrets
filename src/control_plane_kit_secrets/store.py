@@ -12,6 +12,7 @@ from uuid import uuid4
 from .crypto import ALGORITHM, MasterKey, SecretCryptoError
 from .models import (
     ResolvedSecret,
+    SecretAlreadyExists,
     SecretMetadata,
     SecretMetadataInvalid,
     SecretMissing,
@@ -229,32 +230,35 @@ class EncryptedSecretStore:
             plaintext=value,
             aad=self._aad(metadata),
         )
-        with self._connection() as connection:
-            connection.execute(
-                """
-                INSERT INTO secret_versions (
-                    workspace_id, secret_id, version_id, version_number, status,
-                    algorithm, key_fingerprint, key_version, nonce, ciphertext,
-                    labels_json, created_at, revoked_at
+        try:
+            with self._connection() as connection:
+                connection.execute(
+                    """
+                    INSERT INTO secret_versions (
+                        workspace_id, secret_id, version_id, version_number, status,
+                        algorithm, key_fingerprint, key_version, nonce, ciphertext,
+                        labels_json, created_at, revoked_at
+                    )
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    """,
+                    (
+                        metadata.workspace_id,
+                        metadata.secret_id,
+                        metadata.version_id,
+                        metadata.version_number,
+                        metadata.status.value,
+                        metadata.algorithm,
+                        metadata.key_fingerprint,
+                        metadata.key_version,
+                        nonce,
+                        ciphertext,
+                        json.dumps(dict(metadata.labels), sort_keys=True),
+                        metadata.created_at,
+                        metadata.revoked_at,
+                    ),
                 )
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                """,
-                (
-                    metadata.workspace_id,
-                    metadata.secret_id,
-                    metadata.version_id,
-                    metadata.version_number,
-                    metadata.status.value,
-                    metadata.algorithm,
-                    metadata.key_fingerprint,
-                    metadata.key_version,
-                    nonce,
-                    ciphertext,
-                    json.dumps(dict(metadata.labels), sort_keys=True),
-                    metadata.created_at,
-                    metadata.revoked_at,
-                ),
-            )
+        except sqlite3.IntegrityError as exc:
+            raise SecretAlreadyExists() from exc
         return metadata
 
     def _select_row(

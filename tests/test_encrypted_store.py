@@ -14,6 +14,7 @@ from control_plane_kit_secrets.crypto import (
     load_master_key_file,
 )
 from control_plane_kit_secrets.models import (
+    SecretAlreadyExists,
     SecretMetadataInvalid,
     SecretMissing,
     SecretRevoked,
@@ -207,6 +208,26 @@ class EncryptedSecretStoreTests(unittest.TestCase):
 
             with self.assertRaises(SecretMissing):
                 store.resolve_secret(workspace_id="workspace-1", secret_id="missing")
+
+    def test_duplicate_create_fails_closed(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            paths = _paths(directory)
+            store = EncryptedSecretStore(paths["db"], master_key=_write_key(paths["key"]))
+            store.initialize()
+            store.create_secret(
+                workspace_id="workspace-1",
+                secret_id="duplicate",
+                value=b"first-secret-value",
+            )
+
+            with self.assertRaises(SecretAlreadyExists) as context:
+                store.create_secret(
+                    workspace_id="workspace-1",
+                    secret_id="duplicate",
+                    value=b"second-secret-value",
+                )
+
+            self.assertNotIn("second-secret-value", str(context.exception))
 
     def test_labels_are_bounded_metadata(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
