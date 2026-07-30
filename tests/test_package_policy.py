@@ -110,7 +110,7 @@ for name in (
 
         self.assertEqual(completed.returncode, 0, completed.stderr)
 
-    def test_api_slice_does_not_implement_process_entrypoint_yet(self) -> None:
+    def test_package_source_files_are_explicitly_owned(self) -> None:
         source_files = sorted(
             path.relative_to(SRC_ROOT).as_posix()
             for path in SRC_ROOT.rglob("*.py")
@@ -126,6 +126,7 @@ for name in (
                 "boundaries.py",
                 "crypto.py",
                 "models.py",
+                "server.py",
                 "store.py",
             ],
         )
