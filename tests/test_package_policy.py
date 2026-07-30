@@ -123,6 +123,7 @@ for name in (
                 "api.py",
                 "audit.py",
                 "auth.py",
+                "bootstrap.py",
                 "boundaries.py",
                 "crypto.py",
                 "models.py",

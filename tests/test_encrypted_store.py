@@ -4,6 +4,8 @@ import os
 import sqlite3
 import tempfile
 import unittest
+from concurrent.futures import ThreadPoolExecutor
+from threading import Barrier
 from contextlib import closing
 from pathlib import Path
 
@@ -278,6 +280,140 @@ class EncryptedSecretStoreTests(unittest.TestCase):
                     intent="oci.pull-credential",
                     caller_subject="worker-a",
                     correlation_id="effect-a",
+                )
+
+    def test_concurrent_rotations_are_serialized_into_distinct_versions(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            paths = _paths(directory)
+            store = EncryptedSecretStore(
+                paths["db"],
+                master_key=_write_key(paths["key"]),
+            )
+            store.initialize()
+            store.create_secret(
+                workspace_id="workspace-1",
+                secret_id="rotating",
+                value=b"version-1",
+            )
+            barrier = Barrier(2)
+
+            def rotate(value: bytes) -> int:
+                barrier.wait()
+                return store.rotate_secret(
+                    workspace_id="workspace-1",
+                    secret_id="rotating",
+                    value=value,
+                ).version_number
+
+            with ThreadPoolExecutor(max_workers=2) as executor:
+                versions = tuple(
+                    future.result()
+                    for future in (
+                        executor.submit(rotate, b"version-2"),
+                        executor.submit(rotate, b"version-3"),
+                    )
+                )
+
+            self.assertEqual(sorted(versions), [2, 3])
+
+    def test_concurrent_same_correlation_resolve_selects_one_version(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            paths = _paths(directory)
+            store = EncryptedSecretStore(
+                paths["db"],
+                master_key=_write_key(paths["key"]),
+            )
+            store.initialize()
+            expected = store.create_secret(
+                workspace_id="workspace-1",
+                secret_id="shared",
+                value=b"shared-value",
+            )
+            barrier = Barrier(2)
+
+            def resolve() -> str:
+                barrier.wait()
+                return store.resolve_secret_for_use(
+                    workspace_id="workspace-1",
+                    secret_id="shared",
+                    intent="postgres.password",
+                    caller_subject="worker-a",
+                    correlation_id="effect-a",
+                ).metadata.version_id
+
+            with ThreadPoolExecutor(max_workers=2) as executor:
+                selected = tuple(
+                    future.result()
+                    for future in (
+                        executor.submit(resolve),
+                        executor.submit(resolve),
+                    )
+                )
+
+            self.assertEqual(selected, (expected.version_id, expected.version_id))
+            with closing(sqlite3.connect(paths["db"])) as connection:
+                count = connection.execute(
+                    "SELECT COUNT(*) FROM secret_resolution_selections"
+                ).fetchone()
+            self.assertEqual(count, (1,))
+
+    def test_concurrent_first_resolve_and_revoke_have_a_coherent_order(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            paths = _paths(directory)
+            store = EncryptedSecretStore(
+                paths["db"],
+                master_key=_write_key(paths["key"]),
+            )
+            store.initialize()
+            store.create_secret(
+                workspace_id="workspace-1",
+                secret_id="racing",
+                value=b"racing-value",
+            )
+            barrier = Barrier(2)
+
+            def resolve() -> str:
+                barrier.wait()
+                try:
+                    store.resolve_secret_for_use(
+                        workspace_id="workspace-1",
+                        secret_id="racing",
+                        intent="postgres.password",
+                        caller_subject="worker-a",
+                        correlation_id="effect-race",
+                    )
+                    return "resolved-before-revoke"
+                except SecretRevoked:
+                    return "revoked-before-resolve"
+
+            def revoke() -> str:
+                barrier.wait()
+                store.revoke_secret(
+                    workspace_id="workspace-1",
+                    secret_id="racing",
+                )
+                return "revoked"
+
+            with ThreadPoolExecutor(max_workers=2) as executor:
+                resolve_future = executor.submit(resolve)
+                revoke_future = executor.submit(revoke)
+                outcomes = {
+                    resolve_future.result(),
+                    revoke_future.result(),
+                }
+
+            self.assertIn("revoked", outcomes)
+            self.assertTrue(
+                outcomes
+                & {"resolved-before-revoke", "revoked-before-resolve"}
+            )
+            with self.assertRaises(SecretRevoked):
+                store.resolve_secret_for_use(
+                    workspace_id="workspace-1",
+                    secret_id="racing",
+                    intent="postgres.password",
+                    caller_subject="worker-a",
+                    correlation_id="effect-race",
                 )
 
     def test_missing_secret_fails_closed(self) -> None:
