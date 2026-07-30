@@ -11,6 +11,7 @@ from pathlib import Path
 
 from control_plane_kit_secrets.crypto import (
     MasterKey,
+    SecretCryptoError,
     encode_master_key_for_file,
     load_master_key_from_environment,
     load_master_key_file,
@@ -32,6 +33,7 @@ class EncryptedSecretStoreTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             paths = _paths(directory)
             expected = _write_key(paths["key"])
+            paths["key"].chmod(0o600)
 
             loaded = load_master_key_from_environment(
                 {"CPK_SECRETS_MASTER_KEY_FILE": str(paths["key"])},
@@ -40,6 +42,26 @@ class EncryptedSecretStoreTests(unittest.TestCase):
 
             self.assertEqual(loaded.fingerprint, expected.fingerprint)
             self.assertEqual(loaded.version, "mounted-file")
+
+    def test_master_key_environment_rejects_unsafe_bootstrap_files(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            paths = _paths(directory)
+            _write_key(paths["key"])
+            symlink = Path(directory, "master-link.key")
+            symlink.symlink_to(paths["key"])
+
+            invalid = (
+                {"CPK_SECRETS_MASTER_KEY_FILE": "relative.key"},
+                {"CPK_SECRETS_MASTER_KEY_FILE": str(paths["key"])},
+                {"CPK_SECRETS_MASTER_KEY_FILE": str(symlink)},
+            )
+            for environment in invalid:
+                with self.subTest(environment=environment):
+                    with self.assertRaisesRegex(
+                        SecretCryptoError,
+                        "invalid master key file",
+                    ):
+                        load_master_key_from_environment(environment)
 
     def test_restart_preserves_resolution_with_same_master_key(self) -> None:
         with tempfile.TemporaryDirectory() as directory:

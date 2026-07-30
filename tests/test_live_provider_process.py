@@ -25,6 +25,7 @@ class LiveProviderProcessTests(unittest.TestCase):
             key_path = base / "master.key"
             key_bytes = os.urandom(32)
             key_path.write_text(encode_master_key_for_file(key_bytes), encoding="utf-8")
+            key_path.chmod(0o600)
             token = "provider-token-for-live-test"
             denied_token = "metadata-only-token"
             credentials_path = base / "provider-credentials.json"
@@ -206,6 +207,7 @@ class LiveProviderProcessTests(unittest.TestCase):
                 encode_master_key_for_file(os.urandom(32)),
                 encoding="utf-8",
             )
+            wrong_key_path.chmod(0o600)
             wrong_environment = {
                 **environment,
                 "CPK_SECRETS_MASTER_KEY_FILE": str(wrong_key_path),

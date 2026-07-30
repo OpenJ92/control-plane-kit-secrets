@@ -124,6 +124,7 @@ for name in (
                 "audit.py",
                 "auth.py",
                 "bootstrap.py",
+                "bootstrap_files.py",
                 "boundaries.py",
                 "crypto.py",
                 "models.py",

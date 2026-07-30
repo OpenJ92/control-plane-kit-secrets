@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import base64
+import binascii
 import hashlib
 import os
 from dataclasses import dataclass
@@ -9,9 +10,15 @@ from typing import Mapping
 
 from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 
+from .bootstrap_files import (
+    ProtectedBootstrapFileError,
+    read_protected_bootstrap_file,
+)
+
 
 MASTER_KEY_BYTES = 32
 ALGORITHM = "AES-256-GCM"
+MAXIMUM_MASTER_KEY_FILE_BYTES = 4096
 
 
 class SecretCryptoError(Exception):
@@ -39,9 +46,13 @@ class MasterKey:
 
 def load_master_key_file(path: str | Path, *, version: str = "local") -> MasterKey:
     encoded = Path(path).read_text(encoding="utf-8").strip()
+    return _master_key_from_encoded(encoded, version=version)
+
+
+def _master_key_from_encoded(encoded: str, *, version: str) -> MasterKey:
     try:
         key = base64.urlsafe_b64decode(encoded.encode("ascii"))
-    except Exception as exc:
+    except (UnicodeEncodeError, binascii.Error, ValueError) as exc:
         raise SecretCryptoError("invalid master key file") from exc
     if len(key) != MASTER_KEY_BYTES:
         raise SecretCryptoError("invalid master key file")
@@ -58,7 +69,14 @@ def load_master_key_from_environment(
     path = source.get(variable)
     if not path:
         raise SecretCryptoError("master key file is not configured")
-    return load_master_key_file(path, version=version)
+    try:
+        encoded = read_protected_bootstrap_file(
+            path,
+            maximum_bytes=MAXIMUM_MASTER_KEY_FILE_BYTES,
+        ).decode("utf-8").strip()
+    except (ProtectedBootstrapFileError, UnicodeDecodeError) as exc:
+        raise SecretCryptoError("invalid master key file") from exc
+    return _master_key_from_encoded(encoded, version=version)
 
 
 def encode_master_key_for_file(key: bytes) -> str:
