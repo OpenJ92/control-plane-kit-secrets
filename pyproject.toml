@@ -20,6 +20,7 @@ dependencies = [
 [project.optional-dependencies]
 test = [
   "httpx>=0.28",
+  "uvicorn>=0.35",
 ]
 
 [tool.setuptools.packages.find]
