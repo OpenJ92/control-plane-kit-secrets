@@ -14,10 +14,13 @@ authors = [
 ]
 dependencies = [
   "cryptography>=42",
+  "fastapi>=0.116",
 ]
 
 [project.optional-dependencies]
-test = []
+test = [
+  "httpx>=0.28",
+]
 
 [tool.setuptools.packages.find]
 where = ["src"]
