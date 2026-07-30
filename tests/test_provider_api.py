@@ -148,10 +148,31 @@ class ProviderApiTests(unittest.TestCase):
             revoked = fixture.client.post(
                 "/v1/workspaces/workspace-1/secrets/oci-token/revoke",
                 headers=fixture.headers("revoke-token"),
+                json={
+                    "caller_subject": "cpk-cloudflare-interpreter",
+                    "correlation_id": "generated-secret-compensation-1",
+                },
             )
             self.assertEqual(revoked.status_code, 200, revoked.text)
             self.assertEqual(revoked.json()["outcome"], "revoked")
             self.assertNotIn("new-oci-token", revoked.text)
+            revoke_rows = [
+                row
+                for row in fixture.audit_rows()
+                if row["outcome"] == "revoked"
+            ]
+            self.assertEqual(
+                {
+                    (row["caller_subject"], row["correlation_id"])
+                    for row in revoke_rows
+                },
+                {
+                    (
+                        "cpk-cloudflare-interpreter",
+                        "generated-secret-compensation-1",
+                    )
+                },
+            )
 
             resolved = fixture.client.post(
                 "/v1/workspaces/workspace-1/secrets/oci-token/resolve",
@@ -164,6 +185,25 @@ class ProviderApiTests(unittest.TestCase):
                 [row["outcome"] for row in fixture.audit_rows()],
                 ["stored", "rotated", "revoked", "revoked", "revoked"],
             )
+
+    def test_revoke_remains_compatible_without_a_request_body(self) -> None:
+        with _client() as fixture:
+            fixture.write_secret(
+                token="writer-token",
+                workspace_id="workspace-1",
+                secret_id="legacy-revoke",
+                value=b"legacy-revoke-value",
+            )
+
+            response = fixture.client.post(
+                "/v1/workspaces/workspace-1/secrets/legacy-revoke/revoke",
+                headers=fixture.headers("revoke-token"),
+            )
+
+            self.assertEqual(response.status_code, 200, response.text)
+            row = fixture.audit_rows()[-1]
+            self.assertEqual(row["caller_subject"], "revoker")
+            self.assertEqual(row["correlation_id"], "not-provided")
 
     def test_malformed_oversized_and_unsupported_intent_are_bounded(self) -> None:
         with _client() as fixture:

@@ -64,6 +64,11 @@ class SecretResolveRequest(BaseModel):
     version_id: str | None = None
 
 
+class SecretRevokeRequest(BaseModel):
+    caller_subject: str | None = Field(default=None, max_length=128)
+    correlation_id: str | None = Field(default=None, max_length=MAX_CORRELATION_CHARS)
+
+
 def create_app(
     *,
     store: EncryptedSecretStore,
@@ -349,9 +354,20 @@ def create_app(
     def revoke_secret(
         workspace_id: str,
         secret_id: str,
+        request: SecretRevokeRequest | None = None,
         client: ProviderCredential = Depends(credential),
     ) -> dict[str, Any]:
         _require(authorizer, client, action="secret.revoke", workspace_id=workspace_id)
+        caller_subject = (
+            client.subject
+            if request is None or request.caller_subject is None
+            else request.caller_subject
+        )
+        correlation_id = (
+            "not-provided"
+            if request is None or request.correlation_id is None
+            else request.correlation_id
+        )
         try:
             revoked = store.revoke_secret(workspace_id=workspace_id, secret_id=secret_id)
             for metadata in revoked:
@@ -362,8 +378,8 @@ def create_app(
                     secret_id=secret_id,
                     version_id=metadata.version_id,
                     intent=None,
-                    caller_subject=client.subject,
-                    correlation_id="not-provided",
+                    caller_subject=caller_subject,
+                    correlation_id=correlation_id,
                     outcome="revoked",
                     code="secret-revoked",
                 )
@@ -379,8 +395,8 @@ def create_app(
                 secret_id=secret_id,
                 version_id=None,
                 intent=None,
-                caller_subject=client.subject,
-                correlation_id="not-provided",
+                caller_subject=caller_subject,
+                correlation_id=correlation_id,
                 outcome="missing",
                 code="secret-missing",
             )
@@ -393,8 +409,8 @@ def create_app(
                 secret_id=secret_id,
                 version_id=None,
                 intent=None,
-                caller_subject=client.subject,
-                correlation_id="not-provided",
+                caller_subject=caller_subject,
+                correlation_id=correlation_id,
                 outcome="unavailable",
                 code="integrity-failure",
             )
