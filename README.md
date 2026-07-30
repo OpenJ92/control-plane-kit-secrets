@@ -37,6 +37,18 @@ database. It does not store the raw master key. Future key rotation should add
 an explicit rewrap or new-version flow; it must not silently change the key used
 to decrypt existing ciphertext.
 
+## Resolution Version Policy
+
+Provider resolution uses `current-at-first-effect, pinned-for-retry` semantics.
+The first resolve for one workspace/correlation atomically selects the current
+active version. Exact replay of that correlation uses the selected version even
+after rotation. A new correlation selects the new current version.
+
+Correlation reuse with a different secret, intent, or caller fails closed.
+Revocation blocks unresolved uses and later retries of a selected version; it
+does not rewrite completed audit history. Selection records contain identifiers
+and version metadata only, never plaintext or ciphertext.
+
 ## Boundary
 
 ```text

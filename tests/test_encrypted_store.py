@@ -17,6 +17,7 @@ from control_plane_kit_secrets.models import (
     SecretAlreadyExists,
     SecretMetadataInvalid,
     SecretMissing,
+    SecretResolutionConflict,
     SecretRevoked,
     SecretStatus,
     SecretTampered,
@@ -199,6 +200,85 @@ class EncryptedSecretStoreTests(unittest.TestCase):
                 ).value,
                 b"old-token",
             )
+
+    def test_resolution_correlation_pins_first_version_across_rotation_and_restart(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            paths = _paths(directory)
+            key = _write_key(paths["key"])
+            store = EncryptedSecretStore(paths["db"], master_key=key)
+            store.initialize()
+            first = store.create_secret(
+                workspace_id="workspace-1",
+                secret_id="postgres-password",
+                value=b"version-a",
+            )
+
+            selected = store.resolve_secret_for_use(
+                workspace_id="workspace-1",
+                secret_id="postgres-password",
+                intent="postgres.password",
+                caller_subject="worker-a",
+                correlation_id="effect-a",
+            )
+            second = store.rotate_secret(
+                workspace_id="workspace-1",
+                secret_id="postgres-password",
+                value=b"version-b",
+            )
+            restarted = EncryptedSecretStore(paths["db"], master_key=key)
+            restarted.initialize()
+            replayed = restarted.resolve_secret_for_use(
+                workspace_id="workspace-1",
+                secret_id="postgres-password",
+                intent="postgres.password",
+                caller_subject="worker-a",
+                correlation_id="effect-a",
+            )
+            new_effect = restarted.resolve_secret_for_use(
+                workspace_id="workspace-1",
+                secret_id="postgres-password",
+                intent="postgres.password",
+                caller_subject="worker-a",
+                correlation_id="effect-b",
+            )
+
+            self.assertEqual(selected.metadata.version_id, first.version_id)
+            self.assertEqual(replayed.metadata.version_id, first.version_id)
+            self.assertEqual(new_effect.metadata.version_id, second.version_id)
+
+    def test_resolution_correlation_reuse_with_changed_semantics_fails_closed(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            paths = _paths(directory)
+            store = EncryptedSecretStore(
+                paths["db"],
+                master_key=_write_key(paths["key"]),
+            )
+            store.initialize()
+            store.create_secret(
+                workspace_id="workspace-1",
+                secret_id="shared",
+                value=b"secret-value",
+            )
+            store.resolve_secret_for_use(
+                workspace_id="workspace-1",
+                secret_id="shared",
+                intent="postgres.password",
+                caller_subject="worker-a",
+                correlation_id="effect-a",
+            )
+
+            with self.assertRaises(SecretResolutionConflict):
+                store.resolve_secret_for_use(
+                    workspace_id="workspace-1",
+                    secret_id="shared",
+                    intent="oci.pull-credential",
+                    caller_subject="worker-a",
+                    correlation_id="effect-a",
+                )
 
     def test_missing_secret_fails_closed(self) -> None:
         with tempfile.TemporaryDirectory() as directory:

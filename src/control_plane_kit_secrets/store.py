@@ -16,6 +16,7 @@ from .models import (
     SecretMetadata,
     SecretMetadataInvalid,
     SecretMissing,
+    SecretResolutionConflict,
     SecretRevoked,
     SecretStatus,
     SecretTampered,
@@ -59,6 +60,26 @@ class EncryptedSecretStore:
                 """
                 CREATE INDEX IF NOT EXISTS idx_secret_versions_latest
                 ON secret_versions (workspace_id, secret_id, version_number DESC)
+                """
+            )
+            connection.execute(
+                """
+                CREATE TABLE IF NOT EXISTS secret_resolution_selections (
+                    workspace_id TEXT NOT NULL,
+                    correlation_id TEXT NOT NULL,
+                    secret_id TEXT NOT NULL,
+                    intent TEXT NOT NULL,
+                    caller_subject TEXT NOT NULL,
+                    version_id TEXT NOT NULL,
+                    selected_at TEXT NOT NULL,
+                    PRIMARY KEY (workspace_id, correlation_id),
+                    FOREIGN KEY (workspace_id, secret_id, version_id)
+                      REFERENCES secret_versions (
+                        workspace_id,
+                        secret_id,
+                        version_id
+                      )
+                )
                 """
             )
 
@@ -189,6 +210,93 @@ class EncryptedSecretStore:
             raise SecretRevoked()
         return ResolvedSecret(metadata=metadata, _value=self._decrypt_row(row))
 
+    def resolve_secret_for_use(
+        self,
+        *,
+        workspace_id: str,
+        secret_id: str,
+        intent: str,
+        caller_subject: str,
+        correlation_id: str,
+        version_id: str | None = None,
+    ) -> ResolvedSecret:
+        """Atomically pin first use and replay the selected provider version."""
+
+        with self._connection() as connection:
+            connection.execute("BEGIN IMMEDIATE")
+            selection = connection.execute(
+                """
+                SELECT secret_id, intent, caller_subject, version_id
+                FROM secret_resolution_selections
+                WHERE workspace_id = ? AND correlation_id = ?
+                """,
+                (workspace_id, correlation_id),
+            ).fetchone()
+            if selection is not None:
+                selected_version_id = str(selection["version_id"])
+                if (
+                    str(selection["secret_id"]) != secret_id
+                    or str(selection["intent"]) != intent
+                    or str(selection["caller_subject"]) != caller_subject
+                    or (
+                        version_id is not None
+                        and version_id != selected_version_id
+                    )
+                ):
+                    raise SecretResolutionConflict()
+            else:
+                selected = self._select_row_with_connection(
+                    connection,
+                    workspace_id=workspace_id,
+                    secret_id=secret_id,
+                    version_id=version_id,
+                )
+                if selected is None:
+                    raise SecretMissing()
+                selected_metadata = self._metadata_from_row(selected)
+                if selected_metadata.status is SecretStatus.REVOKED:
+                    raise SecretRevoked()
+                selected_version_id = selected_metadata.version_id
+                connection.execute(
+                    """
+                    INSERT INTO secret_resolution_selections (
+                        workspace_id,
+                        correlation_id,
+                        secret_id,
+                        intent,
+                        caller_subject,
+                        version_id,
+                        selected_at
+                    )
+                    VALUES (?, ?, ?, ?, ?, ?, ?)
+                    """,
+                    (
+                        workspace_id,
+                        correlation_id,
+                        secret_id,
+                        intent,
+                        caller_subject,
+                        selected_version_id,
+                        _now(),
+                    ),
+                )
+
+            row = self._select_row_with_connection(
+                connection,
+                workspace_id=workspace_id,
+                secret_id=secret_id,
+                version_id=selected_version_id,
+            )
+            if row is None:
+                raise SecretMissing()
+            metadata = self._metadata_from_row(row)
+            if metadata.status is SecretStatus.REVOKED:
+                raise SecretRevoked()
+            return ResolvedSecret(
+                metadata=metadata,
+                _value=self._decrypt_row(row),
+            )
+
     def raw_rows_for_tests(self) -> list[dict[str, Any]]:
         with self._connection() as connection:
             rows = connection.execute(
@@ -269,18 +377,35 @@ class EncryptedSecretStore:
         version_id: str | None,
     ) -> sqlite3.Row | None:
         with self._connection() as connection:
-            if version_id is None:
-                return self._latest_row(
-                    connection, workspace_id=workspace_id, secret_id=secret_id
-                )
-            return connection.execute(
-                """
-                SELECT *
-                FROM secret_versions
-                WHERE workspace_id = ? AND secret_id = ? AND version_id = ?
-                """,
-                (workspace_id, secret_id, version_id),
-            ).fetchone()
+            return self._select_row_with_connection(
+                connection,
+                workspace_id=workspace_id,
+                secret_id=secret_id,
+                version_id=version_id,
+            )
+
+    def _select_row_with_connection(
+        self,
+        connection: sqlite3.Connection,
+        *,
+        workspace_id: str,
+        secret_id: str,
+        version_id: str | None,
+    ) -> sqlite3.Row | None:
+        if version_id is None:
+            return self._latest_row(
+                connection,
+                workspace_id=workspace_id,
+                secret_id=secret_id,
+            )
+        return connection.execute(
+            """
+            SELECT *
+            FROM secret_versions
+            WHERE workspace_id = ? AND secret_id = ? AND version_id = ?
+            """,
+            (workspace_id, secret_id, version_id),
+        ).fetchone()
 
     def _latest_row(
         self, connection: sqlite3.Connection, *, workspace_id: str, secret_id: str
@@ -361,6 +486,7 @@ class EncryptedSecretStore:
         self._database_path.parent.mkdir(parents=True, exist_ok=True)
         connection = sqlite3.connect(self._database_path)
         connection.row_factory = sqlite3.Row
+        connection.execute("PRAGMA foreign_keys = ON")
         return connection
 
     @contextmanager
