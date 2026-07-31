@@ -24,6 +24,7 @@ class ProviderApiTests(unittest.TestCase):
                 headers=fixture.headers("writer-token"),
                 json={
                     "value_base64": _b64(sentinel),
+                    "intent": "cloudflare.api-token",
                     "labels": {"intent": "cloudflare.api-token"},
                 },
             )
@@ -40,11 +41,19 @@ class ProviderApiTests(unittest.TestCase):
 
             self.assertEqual(metadata.status_code, 200, metadata.text)
             self.assertEqual(metadata.json()["metadata"]["secret_id"], "cloudflare-token")
+            self.assertEqual(
+                metadata.json()["metadata"]["labels"]["intent"],
+                "cloudflare.api-token",
+            )
             self.assertNotIn("value_base64", metadata.text)
             self.assertNotIn(sentinel.decode("ascii"), metadata.text)
             self.assertEqual(
                 [row["outcome"] for row in fixture.audit_rows()],
                 ["stored", "metadata"],
+            )
+            self.assertEqual(
+                fixture.audit_rows()[0]["intent"],
+                "cloudflare.api-token",
             )
 
     def test_resolve_requires_authentication_scope_and_intent(self) -> None:
@@ -54,6 +63,7 @@ class ProviderApiTests(unittest.TestCase):
                 workspace_id="workspace-1",
                 secret_id="gateway-key",
                 value=b"gateway-signing-key",
+                intent="gateway.probe-signing-key",
             )
 
             unauthenticated = fixture.client.post(
@@ -101,6 +111,7 @@ class ProviderApiTests(unittest.TestCase):
                 workspace_id="workspace-1",
                 secret_id="postgres-password",
                 value=b"postgres-password",
+                intent="postgres.password",
             )
 
             response = fixture.client.post(
@@ -139,7 +150,11 @@ class ProviderApiTests(unittest.TestCase):
             rotated = fixture.client.post(
                 "/v1/workspaces/workspace-1/secrets/oci-token/rotate",
                 headers=fixture.headers("rotate-token"),
-                json={"value_base64": _b64(b"new-oci-token"), "labels": {}},
+                json={
+                    "value_base64": _b64(b"new-oci-token"),
+                    "intent": "oci.pull-credential",
+                    "labels": {},
+                },
             )
             self.assertEqual(rotated.status_code, 200, rotated.text)
             self.assertEqual(rotated.json()["metadata"]["version_number"], 2)
@@ -185,6 +200,14 @@ class ProviderApiTests(unittest.TestCase):
                 [row["outcome"] for row in fixture.audit_rows()],
                 ["stored", "rotated", "revoked", "revoked", "revoked"],
             )
+            self.assertEqual(
+                {
+                    row["intent"]
+                    for row in fixture.audit_rows()
+                    if row["outcome"] in {"stored", "rotated", "revoked"}
+                },
+                {"oci.pull-credential"},
+            )
 
     def test_resolve_correlation_pins_version_and_rejects_semantic_reuse(
         self,
@@ -204,7 +227,11 @@ class ProviderApiTests(unittest.TestCase):
             rotated = fixture.client.post(
                 "/v1/workspaces/workspace-1/secrets/oci-token/rotate",
                 headers=fixture.headers("rotate-token"),
-                json={"value_base64": _b64(b"version-b"), "labels": {}},
+                json={
+                    "value_base64": _b64(b"version-b"),
+                    "intent": "oci.pull-credential",
+                    "labels": {},
+                },
             )
             replay = fixture.client.post(
                 "/v1/workspaces/workspace-1/secrets/oci-token/resolve",
@@ -272,7 +299,11 @@ class ProviderApiTests(unittest.TestCase):
             malformed = fixture.client.post(
                 "/v1/workspaces/workspace-1/secrets/bad",
                 headers=fixture.headers("writer-token"),
-                json={"value_base64": "not base64!", "labels": {}},
+                json={
+                    "value_base64": "not base64!",
+                    "intent": "oci.pull-credential",
+                    "labels": {},
+                },
             )
             self.assertEqual(malformed.status_code, 400)
 
@@ -280,7 +311,11 @@ class ProviderApiTests(unittest.TestCase):
             oversized = fixture.client.post(
                 "/v1/workspaces/workspace-1/secrets/too-large",
                 headers=fixture.headers("writer-token"),
-                json={"value_base64": _b64(oversized_secret), "labels": {}},
+                json={
+                    "value_base64": _b64(oversized_secret),
+                    "intent": "oci.pull-credential",
+                    "labels": {},
+                },
             )
             self.assertEqual(oversized.status_code, 400)
             self.assertNotIn("x" * 100, oversized.text)
@@ -310,13 +345,123 @@ class ProviderApiTests(unittest.TestCase):
             response = fixture.client.post(
                 "/v1/workspaces/workspace-1/secrets/duplicate",
                 headers=fixture.headers("writer-token"),
-                json={"value_base64": _b64(b"second-secret-value"), "labels": {}},
+                json={
+                    "value_base64": _b64(b"second-secret-value"),
+                    "intent": "oci.pull-credential",
+                    "labels": {},
+                },
             )
 
             self.assertEqual(response.status_code, 409)
             self.assertEqual(response.json()["detail"]["outcome"], "already-exists")
             self.assertNotIn("second-secret-value", response.text)
             self.assertIn("already-exists", [row["outcome"] for row in fixture.audit_rows()])
+
+    def test_write_intent_is_required_authorized_and_canonical(self) -> None:
+        with _client() as fixture:
+            missing = fixture.client.post(
+                "/v1/workspaces/workspace-1/secrets/missing-intent",
+                headers=fixture.headers("writer-token"),
+                json={"value_base64": _b64(b"value"), "labels": {}},
+            )
+            unsupported = fixture.client.post(
+                "/v1/workspaces/workspace-1/secrets/unsupported-intent",
+                headers=fixture.headers("writer-token"),
+                json={
+                    "value_base64": _b64(b"value"),
+                    "intent": "freeform.intent",
+                    "labels": {},
+                },
+            )
+            denied = fixture.client.post(
+                "/v1/workspaces/workspace-1/secrets/denied-intent",
+                headers=fixture.headers("postgres-writer-token"),
+                json={
+                    "value_base64": _b64(b"value"),
+                    "intent": "cloudflare.api-token",
+                    "labels": {},
+                },
+            )
+            conflicting = fixture.client.post(
+                "/v1/workspaces/workspace-1/secrets/conflicting-intent",
+                headers=fixture.headers("writer-token"),
+                json={
+                    "value_base64": _b64(b"value"),
+                    "intent": "cloudflare.api-token",
+                    "labels": {"intent": "postgres.password"},
+                },
+            )
+
+            self.assertEqual(missing.status_code, 422)
+            self.assertEqual(unsupported.status_code, 400)
+            self.assertEqual(denied.status_code, 403)
+            self.assertEqual(conflicting.status_code, 400)
+            self.assertEqual(
+                [
+                    (row["outcome"], row["intent"])
+                    for row in fixture.audit_rows()
+                    if row["secret_id"] in {
+                        "unsupported-intent",
+                        "denied-intent",
+                        "conflicting-intent",
+                    }
+                ],
+                [
+                    ("malformed", "freeform.intent"),
+                    ("denied", "cloudflare.api-token"),
+                    ("malformed", "cloudflare.api-token"),
+                ],
+            )
+
+    def test_rotate_and_resolve_cannot_change_durable_intent(self) -> None:
+        with _client() as fixture:
+            fixture.write_secret(
+                token="writer-token",
+                workspace_id="workspace-1",
+                secret_id="intent-bound",
+                value=b"intent-bound-value",
+                intent="oci.pull-credential",
+            )
+            rotated = fixture.client.post(
+                "/v1/workspaces/workspace-1/secrets/intent-bound/rotate",
+                headers=fixture.headers("rotate-token"),
+                json={
+                    "value_base64": _b64(b"changed-value"),
+                    "intent": "cloudflare.api-token",
+                    "labels": {},
+                },
+            )
+            resolved = fixture.client.post(
+                "/v1/workspaces/workspace-1/secrets/intent-bound/resolve",
+                headers=fixture.headers("resolver-token"),
+                json=_resolve_body("gateway.probe-signing-key"),
+            )
+
+            self.assertEqual(rotated.status_code, 409)
+            self.assertEqual(resolved.status_code, 403)
+            metadata = fixture.client.get(
+                "/v1/workspaces/workspace-1/secrets/intent-bound/metadata",
+                headers=fixture.headers("metadata-token"),
+            )
+            self.assertEqual(metadata.json()["metadata"]["version_number"], 1)
+            self.assertEqual(
+                metadata.json()["metadata"]["labels"]["intent"],
+                "oci.pull-credential",
+            )
+            self.assertIn(
+                ("already-exists", "cloudflare.api-token", "secret-intent-conflict"),
+                {
+                    (row["outcome"], row["intent"], row["code"])
+                    for row in fixture.audit_rows()
+                },
+            )
+            self.assertIn(
+                ("denied", "gateway.probe-signing-key", "secret-intent-mismatch"),
+                {
+                    (row["outcome"], row["intent"], row["code"])
+                    for row in fixture.audit_rows()
+                },
+            )
 
     def test_audit_failure_blocks_resolve_material(self) -> None:
         with _client(audit_store_factory=lambda _path: _FailingAuditStore()) as fixture:
@@ -370,7 +515,27 @@ class _ApiFixture:
                         subject="writer",
                         token="writer-token",
                         grants=(
-                            ProviderGrant("secret.write", "workspace-1"),
+                            ProviderGrant(
+                                "secret.write",
+                                "workspace-1",
+                                (
+                                    "cloudflare.api-token",
+                                    "gateway.probe-signing-key",
+                                    "oci.pull-credential",
+                                    "postgres.password",
+                                ),
+                            ),
+                        ),
+                    ),
+                    ProviderCredential(
+                        subject="postgres-writer",
+                        token="postgres-writer-token",
+                        grants=(
+                            ProviderGrant(
+                                "secret.write",
+                                "workspace-1",
+                                ("postgres.password",),
+                            ),
                         ),
                     ),
                     ProviderCredential(
@@ -406,7 +571,14 @@ class _ApiFixture:
                         subject="rotator",
                         token="rotate-token",
                         grants=(
-                            ProviderGrant("secret.rotate", "workspace-1"),
+                            ProviderGrant(
+                                "secret.rotate",
+                                "workspace-1",
+                                (
+                                    "cloudflare.api-token",
+                                    "oci.pull-credential",
+                                ),
+                            ),
                         ),
                     ),
                     ProviderCredential(
@@ -444,11 +616,16 @@ class _ApiFixture:
         workspace_id: str,
         secret_id: str,
         value: bytes,
+        intent: str = "oci.pull-credential",
     ) -> None:
         response = self.client.post(
             f"/v1/workspaces/{workspace_id}/secrets/{secret_id}",
             headers=self.headers(token),
-            json={"value_base64": _b64(value), "labels": {}},
+            json={
+                "value_base64": _b64(value),
+                "intent": intent,
+                "labels": {},
+            },
         )
         assert response.status_code == 200, response.text
 

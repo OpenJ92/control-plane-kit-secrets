@@ -30,6 +30,11 @@ class SecretResolutionConflict(SecretStoreError):
         super().__init__("secret resolution correlation conflicts with prior use")
 
 
+class SecretIntentMismatch(SecretStoreError):
+    def __init__(self) -> None:
+        super().__init__("secret intent does not match durable metadata")
+
+
 class SecretRevoked(SecretStoreError):
     def __init__(self) -> None:
         super().__init__("secret reference is revoked")
