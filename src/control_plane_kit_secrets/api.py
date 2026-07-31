@@ -16,6 +16,7 @@ from .auth import (
 )
 from .models import (
     SecretAlreadyExists,
+    SecretIntentMismatch,
     SecretMetadata,
     SecretMetadataInvalid,
     SecretMissing,
@@ -46,6 +47,7 @@ ALLOWED_SECRET_USE_INTENTS = frozenset(
 
 class SecretWriteRequest(BaseModel):
     value_base64: str = Field(min_length=1)
+    intent: str
     labels: dict[str, str] = Field(default_factory=dict)
     caller_subject: str | None = Field(default=None, max_length=128)
     correlation_id: str | None = Field(default=None, max_length=MAX_CORRELATION_CHARS)
@@ -53,6 +55,7 @@ class SecretWriteRequest(BaseModel):
 
 class SecretRotateRequest(BaseModel):
     value_base64: str = Field(min_length=1)
+    intent: str
     labels: dict[str, str] = Field(default_factory=dict)
     caller_subject: str | None = Field(default=None, max_length=128)
     correlation_id: str | None = Field(default=None, max_length=MAX_CORRELATION_CHARS)
@@ -101,14 +104,69 @@ def create_app(
         request: SecretWriteRequest,
         client: ProviderCredential = Depends(credential),
     ) -> dict[str, Any]:
-        _require(authorizer, client, action="secret.write", workspace_id=workspace_id)
+        caller_subject = request.caller_subject or client.subject
+        correlation_id = request.correlation_id or "not-provided"
+        try:
+            _validate_intent(request.intent)
+        except HTTPException as exc:
+            _append_audit(
+                audit_store,
+                provider_id=provider_id,
+                workspace_id=workspace_id,
+                secret_id=secret_id,
+                version_id=None,
+                intent=request.intent,
+                caller_subject=caller_subject,
+                correlation_id=correlation_id,
+                outcome="malformed",
+                code="unsupported-intent",
+            )
+            raise exc
+        try:
+            _require(
+                authorizer,
+                client,
+                action="secret.write",
+                workspace_id=workspace_id,
+                intent=request.intent,
+            )
+        except HTTPException as exc:
+            _append_audit(
+                audit_store,
+                provider_id=provider_id,
+                workspace_id=workspace_id,
+                secret_id=secret_id,
+                version_id=None,
+                intent=request.intent,
+                caller_subject=caller_subject,
+                correlation_id=correlation_id,
+                outcome="denied",
+                code="insufficient-scope",
+            )
+            raise exc
+        try:
+            labels = _canonical_intent_labels(request.labels, request.intent)
+        except HTTPException as exc:
+            _append_audit(
+                audit_store,
+                provider_id=provider_id,
+                workspace_id=workspace_id,
+                secret_id=secret_id,
+                version_id=None,
+                intent=request.intent,
+                caller_subject=caller_subject,
+                correlation_id=correlation_id,
+                outcome="malformed",
+                code="intent-label-conflict",
+            )
+            raise exc
         value = _decode_secret_value(request.value_base64)
         try:
             metadata = store.create_secret(
                 workspace_id=workspace_id,
                 secret_id=secret_id,
                 value=value,
-                labels=request.labels,
+                labels=labels,
             )
             _append_audit(
                 audit_store,
@@ -116,9 +174,9 @@ def create_app(
                 workspace_id=workspace_id,
                 secret_id=secret_id,
                 version_id=metadata.version_id,
-                intent=None,
-                caller_subject=request.caller_subject or client.subject,
-                correlation_id=request.correlation_id or "not-provided",
+                intent=request.intent,
+                caller_subject=caller_subject,
+                correlation_id=correlation_id,
                 outcome="stored",
                 code="secret-stored",
             )
@@ -130,9 +188,9 @@ def create_app(
                 workspace_id=workspace_id,
                 secret_id=secret_id,
                 version_id=None,
-                intent=None,
-                caller_subject=request.caller_subject or client.subject,
-                correlation_id=request.correlation_id or "not-provided",
+                intent=request.intent,
+                caller_subject=caller_subject,
+                correlation_id=correlation_id,
                 outcome="malformed",
                 code="invalid-metadata",
             )
@@ -144,9 +202,9 @@ def create_app(
                 workspace_id=workspace_id,
                 secret_id=secret_id,
                 version_id=None,
-                intent=None,
-                caller_subject=request.caller_subject or client.subject,
-                correlation_id=request.correlation_id or "not-provided",
+                intent=request.intent,
+                caller_subject=caller_subject,
+                correlation_id=correlation_id,
                 outcome="already-exists",
                 code="secret-already-exists",
             )
@@ -159,14 +217,70 @@ def create_app(
         request: SecretRotateRequest,
         client: ProviderCredential = Depends(credential),
     ) -> dict[str, Any]:
-        _require(authorizer, client, action="secret.rotate", workspace_id=workspace_id)
+        caller_subject = request.caller_subject or client.subject
+        correlation_id = request.correlation_id or "not-provided"
+        try:
+            _validate_intent(request.intent)
+        except HTTPException as exc:
+            _append_audit(
+                audit_store,
+                provider_id=provider_id,
+                workspace_id=workspace_id,
+                secret_id=secret_id,
+                version_id=None,
+                intent=request.intent,
+                caller_subject=caller_subject,
+                correlation_id=correlation_id,
+                outcome="malformed",
+                code="unsupported-intent",
+            )
+            raise exc
+        try:
+            _require(
+                authorizer,
+                client,
+                action="secret.rotate",
+                workspace_id=workspace_id,
+                intent=request.intent,
+            )
+        except HTTPException as exc:
+            _append_audit(
+                audit_store,
+                provider_id=provider_id,
+                workspace_id=workspace_id,
+                secret_id=secret_id,
+                version_id=None,
+                intent=request.intent,
+                caller_subject=caller_subject,
+                correlation_id=correlation_id,
+                outcome="denied",
+                code="insufficient-scope",
+            )
+            raise exc
+        try:
+            labels = _canonical_intent_labels(request.labels, request.intent)
+        except HTTPException as exc:
+            _append_audit(
+                audit_store,
+                provider_id=provider_id,
+                workspace_id=workspace_id,
+                secret_id=secret_id,
+                version_id=None,
+                intent=request.intent,
+                caller_subject=caller_subject,
+                correlation_id=correlation_id,
+                outcome="malformed",
+                code="intent-label-conflict",
+            )
+            raise exc
         value = _decode_secret_value(request.value_base64)
         try:
             metadata = store.rotate_secret(
                 workspace_id=workspace_id,
                 secret_id=secret_id,
                 value=value,
-                labels=request.labels,
+                labels=labels,
+                expected_intent=request.intent,
             )
             _append_audit(
                 audit_store,
@@ -174,9 +288,9 @@ def create_app(
                 workspace_id=workspace_id,
                 secret_id=secret_id,
                 version_id=metadata.version_id,
-                intent=None,
-                caller_subject=request.caller_subject or client.subject,
-                correlation_id=request.correlation_id or "not-provided",
+                intent=request.intent,
+                caller_subject=caller_subject,
+                correlation_id=correlation_id,
                 outcome="rotated",
                 code="secret-rotated",
             )
@@ -188,9 +302,9 @@ def create_app(
                 workspace_id=workspace_id,
                 secret_id=secret_id,
                 version_id=None,
-                intent=None,
-                caller_subject=request.caller_subject or client.subject,
-                correlation_id=request.correlation_id or "not-provided",
+                intent=request.intent,
+                caller_subject=caller_subject,
+                correlation_id=correlation_id,
                 outcome="missing",
                 code="secret-missing",
             )
@@ -202,9 +316,9 @@ def create_app(
                 workspace_id=workspace_id,
                 secret_id=secret_id,
                 version_id=None,
-                intent=None,
-                caller_subject=request.caller_subject or client.subject,
-                correlation_id=request.correlation_id or "not-provided",
+                intent=request.intent,
+                caller_subject=caller_subject,
+                correlation_id=correlation_id,
                 outcome="malformed",
                 code="invalid-metadata",
             )
@@ -216,13 +330,27 @@ def create_app(
                 workspace_id=workspace_id,
                 secret_id=secret_id,
                 version_id=None,
-                intent=None,
-                caller_subject=request.caller_subject or client.subject,
-                correlation_id=request.correlation_id or "not-provided",
+                intent=request.intent,
+                caller_subject=caller_subject,
+                correlation_id=correlation_id,
                 outcome="already-exists",
                 code="secret-version-conflict",
             )
             raise _error(409, "already-exists", "secret-version-conflict") from exc
+        except SecretIntentMismatch as exc:
+            _append_audit(
+                audit_store,
+                provider_id=provider_id,
+                workspace_id=workspace_id,
+                secret_id=secret_id,
+                version_id=None,
+                intent=request.intent,
+                caller_subject=caller_subject,
+                correlation_id=correlation_id,
+                outcome="already-exists",
+                code="secret-intent-conflict",
+            )
+            raise _error(409, "already-exists", "secret-intent-conflict") from exc
 
     @app.post("/v1/workspaces/{workspace_id}/secrets/{secret_id}/resolve")
     def resolve_secret(
@@ -357,6 +485,20 @@ def create_app(
                 "already-exists",
                 "resolution-correlation-conflict",
             ) from exc
+        except SecretIntentMismatch as exc:
+            _append_resolve_audit(
+                audit_store,
+                provider_id=provider_id,
+                workspace_id=workspace_id,
+                secret_id=secret_id,
+                version_id=request.version_id,
+                intent=request.intent,
+                caller_subject=request.caller_subject,
+                correlation_id=request.correlation_id,
+                outcome="denied",
+                code="secret-intent-mismatch",
+            )
+            raise _error(403, "denied", "secret-intent-mismatch") from exc
         except SecretTampered as exc:
             _append_resolve_audit(
                 audit_store,
@@ -399,7 +541,7 @@ def create_app(
                     workspace_id=workspace_id,
                     secret_id=secret_id,
                     version_id=metadata.version_id,
-                    intent=None,
+                    intent=_durable_metadata_intent(metadata),
                     caller_subject=caller_subject,
                     correlation_id=correlation_id,
                     outcome="revoked",
@@ -512,6 +654,23 @@ def _decode_secret_value(encoded: str) -> bytes:
 def _validate_intent(intent: str) -> None:
     if intent not in ALLOWED_SECRET_USE_INTENTS:
         raise _error(400, "malformed", "unsupported-intent")
+
+
+def _canonical_intent_labels(
+    labels: dict[str, str],
+    intent: str,
+) -> dict[str, str]:
+    supplied = labels.get("intent")
+    if supplied is not None and supplied != intent:
+        raise _error(400, "malformed", "intent-label-conflict")
+    return {**labels, "intent": intent}
+
+
+def _durable_metadata_intent(metadata: SecretMetadata) -> str | None:
+    intent = metadata.labels.get("intent")
+    if intent in ALLOWED_SECRET_USE_INTENTS:
+        return intent
+    return None
 
 
 def _require(

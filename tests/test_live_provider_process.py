@@ -80,7 +80,8 @@ class LiveProviderProcessTests(unittest.TestCase):
                     token=token,
                     json_body={
                         "value_base64": _b64(secret_value),
-                        "labels": {"intent": "postgres.password"},
+                        "intent": "postgres.password",
+                        "labels": {},
                         "caller_subject": "acceptance",
                         "correlation_id": "write-1",
                     },
@@ -96,7 +97,8 @@ class LiveProviderProcessTests(unittest.TestCase):
                     token=token,
                     json_body={
                         "value_base64": _b64(wrong_key_target),
-                        "labels": {"intent": "postgres.password"},
+                        "intent": "postgres.password",
+                        "labels": {},
                         "caller_subject": "acceptance",
                         "correlation_id": "write-wrong-key-target",
                     },
@@ -131,7 +133,8 @@ class LiveProviderProcessTests(unittest.TestCase):
                     token=token,
                     json_body={
                         "value_base64": _b64(rotated_value),
-                        "labels": {"intent": "postgres.password"},
+                        "intent": "postgres.password",
+                        "labels": {},
                         "caller_subject": "acceptance",
                         "correlation_id": "rotate-1",
                     },

@@ -237,6 +237,7 @@ class EncryptedSecretStoreTests(unittest.TestCase):
                 workspace_id="workspace-1",
                 secret_id="postgres-password",
                 value=b"version-a",
+                labels={"intent": "postgres.password"},
             )
 
             selected = store.resolve_secret_for_use(
@@ -250,6 +251,7 @@ class EncryptedSecretStoreTests(unittest.TestCase):
                 workspace_id="workspace-1",
                 secret_id="postgres-password",
                 value=b"version-b",
+                labels={"intent": "postgres.password"},
             )
             restarted = EncryptedSecretStore(paths["db"], master_key=key)
             restarted.initialize()
@@ -286,6 +288,7 @@ class EncryptedSecretStoreTests(unittest.TestCase):
                 workspace_id="workspace-1",
                 secret_id="shared",
                 value=b"secret-value",
+                labels={"intent": "postgres.password"},
             )
             store.resolve_secret_for_use(
                 workspace_id="workspace-1",
@@ -350,6 +353,7 @@ class EncryptedSecretStoreTests(unittest.TestCase):
                 workspace_id="workspace-1",
                 secret_id="shared",
                 value=b"shared-value",
+                labels={"intent": "postgres.password"},
             )
             barrier = Barrier(2)
 
@@ -391,6 +395,7 @@ class EncryptedSecretStoreTests(unittest.TestCase):
                 workspace_id="workspace-1",
                 secret_id="racing",
                 value=b"racing-value",
+                labels={"intent": "postgres.password"},
             )
             barrier = Barrier(2)
 

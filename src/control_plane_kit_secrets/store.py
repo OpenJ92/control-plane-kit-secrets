@@ -13,6 +13,7 @@ from .crypto import ALGORITHM, MasterKey, SecretCryptoError
 from .models import (
     ResolvedSecret,
     SecretAlreadyExists,
+    SecretIntentMismatch,
     SecretMetadata,
     SecretMetadataInvalid,
     SecretMissing,
@@ -109,6 +110,7 @@ class EncryptedSecretStore:
         secret_id: str,
         value: bytes,
         labels: dict[str, str] | None = None,
+        expected_intent: str | None = None,
     ) -> SecretMetadata:
         with self._connection() as connection:
             connection.execute("BEGIN IMMEDIATE")
@@ -117,6 +119,12 @@ class EncryptedSecretStore:
             )
             if latest is None:
                 raise SecretMissing()
+            latest_metadata = self._metadata_from_row(latest)
+            if (
+                expected_intent is not None
+                and latest_metadata.labels.get("intent") != expected_intent
+            ):
+                raise SecretIntentMismatch()
             next_number = int(latest["version_number"]) + 1
             return self._insert_version(
                 connection,
@@ -262,6 +270,8 @@ class EncryptedSecretStore:
                 selected_metadata = self._metadata_from_row(selected)
                 if selected_metadata.status is SecretStatus.REVOKED:
                     raise SecretRevoked()
+                if selected_metadata.labels.get("intent") != intent:
+                    raise SecretIntentMismatch()
                 selected_version_id = selected_metadata.version_id
                 connection.execute(
                     """
@@ -298,6 +308,8 @@ class EncryptedSecretStore:
             metadata = self._metadata_from_row(row)
             if metadata.status is SecretStatus.REVOKED:
                 raise SecretRevoked()
+            if metadata.labels.get("intent") != intent:
+                raise SecretIntentMismatch()
             return ResolvedSecret(
                 metadata=metadata,
                 _value=self._decrypt_row(row),
