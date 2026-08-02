@@ -6,14 +6,33 @@ This repository is the future custody boundary for secret material referenced by
 Control Plane Kit language values. Core may name `SecretReference` and secret
 delivery intent. Operations may authorize use and record audit correlation.
 Interpreters may resolve and materialize values at the IO boundary.
-`control-plane-kit-secrets` is the package that will eventually store encrypted
-secret values, version them, revoke them, and audit provider-local access.
+`control-plane-kit-secrets` stores encrypted secret values, versions and revokes
+them, and audits provider-local access.
 
 Current status: provider-local audit. #1166 added provider-local encrypted
 records, versions, rotation, revocation, and tamper-safe load behavior. #1167
 added a narrow FastAPI boundary for authenticated write, resolve, rotate,
 revoke, and metadata operations. #1168 adds provider-local audit records and
 fail-closed resolve behavior when audit persistence is unavailable.
+
+## Delegation Key Generation
+
+The provider owns the closed Ed25519 generation operation used for gateway
+probe delegation. A caller supplies only bounded identity and correlation
+metadata:
+
+```text
+workspace + SecretReference + gateway-probe purpose + issuer + correlation
+  -> provider generates private key
+    -> encrypted custody + generation identity + audit commit atomically
+      -> public key, reference, version, and correlation evidence returned
+```
+
+Private key bytes never cross the generation response. Authorized signers may
+resolve the admitted `gateway.probe-signing-key` reference later through the
+normal use-specific provider route. Exact retries return the original public
+identity. Reusing a correlation for different semantics fails closed, and a
+revoked generated reference cannot be replayed into service.
 
 ```text
 #1169 restart/rotation/revocation acceptance

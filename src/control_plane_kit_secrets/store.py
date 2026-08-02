@@ -9,8 +9,14 @@ from pathlib import Path
 from typing import Any, Iterable, Iterator
 from uuid import uuid4
 
+from cryptography.hazmat.primitives import serialization
+from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
+
+from .audit import SqliteAuditStore, audit_record
 from .crypto import ALGORITHM, MasterKey, SecretCryptoError
 from .models import (
+    DelegationKeyGenerationConflict,
+    GeneratedDelegationKey,
     ResolvedSecret,
     SecretAlreadyExists,
     SecretIntentMismatch,
@@ -27,6 +33,9 @@ NONCE_BYTES = 12
 MAX_LABELS = 16
 MAX_LABEL_KEY_CHARS = 64
 MAX_LABEL_VALUE_CHARS = 256
+DELEGATION_KEY_ALGORITHM = "ed25519"
+GATEWAY_DELEGATION_PURPOSE = "gateway-probe"
+GATEWAY_SIGNING_INTENT = "gateway.probe-signing-key"
 
 
 class EncryptedSecretStore:
@@ -82,6 +91,160 @@ class EncryptedSecretStore:
                       )
                 )
                 """
+            )
+            connection.execute(
+                """
+                CREATE TABLE IF NOT EXISTS delegation_key_generations (
+                    workspace_id TEXT NOT NULL,
+                    correlation_id TEXT NOT NULL,
+                    secret_id TEXT NOT NULL,
+                    secret_reference TEXT NOT NULL,
+                    purpose TEXT NOT NULL,
+                    issuer TEXT NOT NULL,
+                    caller_subject TEXT NOT NULL,
+                    version_id TEXT NOT NULL,
+                    key_id TEXT NOT NULL,
+                    algorithm TEXT NOT NULL,
+                    public_key_pem TEXT NOT NULL,
+                    generated_at TEXT NOT NULL,
+                    PRIMARY KEY (workspace_id, correlation_id),
+                    UNIQUE (workspace_id, secret_id),
+                    FOREIGN KEY (workspace_id, secret_id, version_id)
+                      REFERENCES secret_versions (
+                        workspace_id,
+                        secret_id,
+                        version_id
+                      )
+                )
+                """
+            )
+
+    def generate_delegation_key(
+        self,
+        *,
+        workspace_id: str,
+        secret_id: str,
+        secret_reference: str,
+        purpose: str,
+        issuer: str,
+        caller_subject: str,
+        correlation_id: str,
+        provider_id: str,
+        audit_store: SqliteAuditStore,
+    ) -> GeneratedDelegationKey:
+        """Generate, encrypt, correlate, and audit one key atomically."""
+
+        with self._connection() as connection:
+            connection.execute("BEGIN IMMEDIATE")
+            existing = connection.execute(
+                """
+                SELECT *
+                FROM delegation_key_generations
+                WHERE workspace_id = ? AND correlation_id = ?
+                """,
+                (workspace_id, correlation_id),
+            ).fetchone()
+            if existing is not None:
+                if (
+                    str(existing["secret_id"]) != secret_id
+                    or str(existing["secret_reference"]) != secret_reference
+                    or str(existing["purpose"]) != purpose
+                    or str(existing["issuer"]) != issuer
+                    or str(existing["caller_subject"]) != caller_subject
+                ):
+                    raise DelegationKeyGenerationConflict()
+                result = self._delegation_generation_from_row(
+                    connection,
+                    existing,
+                    replayed=True,
+                )
+                audit_store.append_in_transaction(
+                    connection,
+                    audit_record(
+                        provider_id=provider_id,
+                        workspace_id=workspace_id,
+                        secret_id=secret_id,
+                        version_id=result.metadata.version_id,
+                        intent=GATEWAY_SIGNING_INTENT,
+                        caller_subject=caller_subject,
+                        correlation_id=correlation_id,
+                        outcome="replayed",
+                        code="delegation-key-generation-replayed",
+                    ),
+                )
+                return result
+
+            private_key = Ed25519PrivateKey.generate()
+            private_pem = private_key.private_bytes(
+                encoding=serialization.Encoding.PEM,
+                format=serialization.PrivateFormat.PKCS8,
+                encryption_algorithm=serialization.NoEncryption(),
+            )
+            public_pem = private_key.public_key().public_bytes(
+                encoding=serialization.Encoding.PEM,
+                format=serialization.PublicFormat.SubjectPublicKeyInfo,
+            ).decode("ascii")
+            key_id = _delegation_key_id(public_pem)
+            metadata = self._insert_version(
+                connection,
+                workspace_id=workspace_id,
+                secret_id=secret_id,
+                value=private_pem,
+                labels={
+                    "intent": GATEWAY_SIGNING_INTENT,
+                    "purpose": purpose,
+                    "issuer": issuer,
+                    "key_id": key_id,
+                },
+                version_number=1,
+            )
+            connection.execute(
+                """
+                INSERT INTO delegation_key_generations (
+                    workspace_id, correlation_id, secret_id, secret_reference,
+                    purpose, issuer, caller_subject, version_id, key_id,
+                    algorithm, public_key_pem, generated_at
+                )
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    workspace_id,
+                    correlation_id,
+                    secret_id,
+                    secret_reference,
+                    purpose,
+                    issuer,
+                    caller_subject,
+                    metadata.version_id,
+                    key_id,
+                    DELEGATION_KEY_ALGORITHM,
+                    public_pem,
+                    metadata.created_at,
+                ),
+            )
+            audit_store.append_in_transaction(
+                connection,
+                audit_record(
+                    provider_id=provider_id,
+                    workspace_id=workspace_id,
+                    secret_id=secret_id,
+                    version_id=metadata.version_id,
+                    intent=GATEWAY_SIGNING_INTENT,
+                    caller_subject=caller_subject,
+                    correlation_id=correlation_id,
+                    outcome="generated",
+                    code="delegation-key-generated",
+                ),
+            )
+            return GeneratedDelegationKey(
+                metadata=metadata,
+                secret_reference=secret_reference,
+                purpose=purpose,
+                issuer=issuer,
+                correlation_id=correlation_id,
+                key_id=key_id,
+                algorithm=DELEGATION_KEY_ALGORITHM,
+                public_key_pem=public_pem,
             )
 
     def create_secret(
@@ -328,6 +491,37 @@ class EncryptedSecretStore:
             ).fetchall()
             return [dict(row) for row in rows]
 
+    def _delegation_generation_from_row(
+        self,
+        connection: sqlite3.Connection,
+        row: sqlite3.Row,
+        *,
+        replayed: bool,
+    ) -> GeneratedDelegationKey:
+        secret_row = self._select_row_with_connection(
+            connection,
+            workspace_id=str(row["workspace_id"]),
+            secret_id=str(row["secret_id"]),
+            version_id=str(row["version_id"]),
+        )
+        if secret_row is None:
+            raise SecretMissing()
+        metadata = self._metadata_from_row(secret_row)
+        if metadata.status is SecretStatus.REVOKED:
+            raise SecretRevoked()
+        self._decrypt_row(secret_row)
+        return GeneratedDelegationKey(
+            metadata=metadata,
+            secret_reference=str(row["secret_reference"]),
+            purpose=str(row["purpose"]),
+            issuer=str(row["issuer"]),
+            correlation_id=str(row["correlation_id"]),
+            key_id=str(row["key_id"]),
+            algorithm=str(row["algorithm"]),
+            public_key_pem=str(row["public_key_pem"]),
+            replayed=replayed,
+        )
+
     def _insert_version(
         self,
         connection: sqlite3.Connection,
@@ -537,3 +731,9 @@ def _clean_labels(labels: dict[str, str]) -> dict[str, str]:
             raise SecretMetadataInvalid()
         cleaned[label_key] = label_value
     return cleaned
+
+
+def _delegation_key_id(public_key_pem: str) -> str:
+    from hashlib import sha256
+
+    return f"gateway-{sha256(public_key_pem.encode('ascii')).hexdigest()}"

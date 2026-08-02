@@ -2,7 +2,10 @@ from __future__ import annotations
 
 import base64
 import binascii
+from hashlib import sha256
+import re
 from typing import Any
+from urllib.parse import urlsplit
 
 from fastapi import Depends, FastAPI, Header, HTTPException
 from pydantic import BaseModel, Field
@@ -15,6 +18,7 @@ from .auth import (
     SecretUseDenied,
 )
 from .models import (
+    DelegationKeyGenerationConflict,
     SecretAlreadyExists,
     SecretIntentMismatch,
     SecretMetadata,
@@ -24,11 +28,19 @@ from .models import (
     SecretRevoked,
     SecretTampered,
 )
-from .store import EncryptedSecretStore
+from .store import (
+    EncryptedSecretStore,
+    GATEWAY_DELEGATION_PURPOSE,
+    GATEWAY_SIGNING_INTENT,
+)
 
 
 MAX_SECRET_BYTES = 64 * 1024
 MAX_CORRELATION_CHARS = 128
+MAX_SECRET_REFERENCE_CHARS = 1024
+_IDENTIFIER = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:-]{0,199}$")
+_REFERENCE_PROVIDER = re.compile(r"^[a-z][a-z0-9-]{0,62}$")
+_REFERENCE_SEGMENT = re.compile(r"^[A-Za-z0-9._-]{1,128}$")
 ALLOWED_SECRET_USE_INTENTS = frozenset(
     {
         "application.control-token",
@@ -71,6 +83,17 @@ class SecretResolveRequest(BaseModel):
 class SecretRevokeRequest(BaseModel):
     caller_subject: str | None = Field(default=None, max_length=128)
     correlation_id: str | None = Field(default=None, max_length=MAX_CORRELATION_CHARS)
+
+
+class DelegationKeyGenerateRequest(BaseModel):
+    secret_reference: str = Field(
+        min_length=1,
+        max_length=MAX_SECRET_REFERENCE_CHARS,
+    )
+    purpose: str = Field(min_length=1, max_length=64)
+    issuer: str = Field(min_length=1, max_length=200)
+    caller_subject: str = Field(min_length=1, max_length=200)
+    correlation_id: str = Field(min_length=1, max_length=MAX_CORRELATION_CHARS)
 
 
 def create_app(
@@ -209,6 +232,146 @@ def create_app(
                 code="secret-already-exists",
             )
             raise _error(409, "already-exists", "secret-already-exists") from exc
+
+    @app.post(
+        "/v1/workspaces/{workspace_id}/delegation-keys/{secret_id}/generate"
+    )
+    def generate_delegation_key(
+        workspace_id: str,
+        secret_id: str,
+        request: DelegationKeyGenerateRequest,
+        client: ProviderCredential = Depends(credential),
+    ) -> dict[str, Any]:
+        if (
+            request.purpose != GATEWAY_DELEGATION_PURPOSE
+            or not _IDENTIFIER.fullmatch(request.issuer)
+            or not _IDENTIFIER.fullmatch(request.caller_subject)
+            or not _valid_secret_reference(request.secret_reference)
+        ):
+            _append_audit(
+                audit_store,
+                provider_id=provider_id,
+                workspace_id=workspace_id,
+                secret_id=secret_id,
+                version_id=None,
+                intent=GATEWAY_SIGNING_INTENT,
+                caller_subject=request.caller_subject,
+                correlation_id=request.correlation_id,
+                outcome="malformed",
+                code="invalid-delegation-key-generation",
+            )
+            raise _error(400, "malformed", "invalid-delegation-key-generation")
+        try:
+            _require(
+                authorizer,
+                client,
+                action="secret.generate-delegation-key",
+                workspace_id=workspace_id,
+                intent=GATEWAY_SIGNING_INTENT,
+            )
+        except HTTPException as exc:
+            _append_audit(
+                audit_store,
+                provider_id=provider_id,
+                workspace_id=workspace_id,
+                secret_id=secret_id,
+                version_id=None,
+                intent=GATEWAY_SIGNING_INTENT,
+                caller_subject=request.caller_subject,
+                correlation_id=request.correlation_id,
+                outcome="denied",
+                code="insufficient-scope",
+            )
+            raise exc
+        try:
+            generated = store.generate_delegation_key(
+                workspace_id=workspace_id,
+                secret_id=secret_id,
+                secret_reference=request.secret_reference,
+                purpose=request.purpose,
+                issuer=request.issuer,
+                caller_subject=request.caller_subject,
+                correlation_id=request.correlation_id,
+                provider_id=provider_id,
+                audit_store=audit_store,
+            )
+            return {
+                "outcome": "generated",
+                "secret_reference": generated.secret_reference,
+                "metadata": _metadata_response(generated.metadata),
+                "purpose": generated.purpose,
+                "issuer": generated.issuer,
+                "correlation_id": generated.correlation_id,
+                "key_id": generated.key_id,
+                "algorithm": generated.algorithm,
+                "public_key_pem": generated.public_key_pem,
+                "fingerprint_sha256": sha256(
+                    generated.public_key_pem.encode("ascii")
+                ).hexdigest(),
+                "replayed": generated.replayed,
+            }
+        except DelegationKeyGenerationConflict as exc:
+            _append_audit(
+                audit_store,
+                provider_id=provider_id,
+                workspace_id=workspace_id,
+                secret_id=secret_id,
+                version_id=None,
+                intent=GATEWAY_SIGNING_INTENT,
+                caller_subject=request.caller_subject,
+                correlation_id=request.correlation_id,
+                outcome="conflict",
+                code="generation-correlation-conflict",
+            )
+            raise _error(
+                409,
+                "conflict",
+                "generation-correlation-conflict",
+            ) from exc
+        except SecretAlreadyExists as exc:
+            _append_audit(
+                audit_store,
+                provider_id=provider_id,
+                workspace_id=workspace_id,
+                secret_id=secret_id,
+                version_id=None,
+                intent=GATEWAY_SIGNING_INTENT,
+                caller_subject=request.caller_subject,
+                correlation_id=request.correlation_id,
+                outcome="already-exists",
+                code="secret-already-exists",
+            )
+            raise _error(409, "already-exists", "secret-already-exists") from exc
+        except SecretRevoked as exc:
+            _append_audit(
+                audit_store,
+                provider_id=provider_id,
+                workspace_id=workspace_id,
+                secret_id=secret_id,
+                version_id=None,
+                intent=GATEWAY_SIGNING_INTENT,
+                caller_subject=request.caller_subject,
+                correlation_id=request.correlation_id,
+                outcome="revoked",
+                code="secret-revoked",
+            )
+            raise _error(409, "revoked", "secret-revoked") from exc
+        except SecretTampered as exc:
+            _append_audit(
+                audit_store,
+                provider_id=provider_id,
+                workspace_id=workspace_id,
+                secret_id=secret_id,
+                version_id=None,
+                intent=GATEWAY_SIGNING_INTENT,
+                caller_subject=request.caller_subject,
+                correlation_id=request.correlation_id,
+                outcome="unavailable",
+                code="integrity-failure",
+            )
+            raise _error(503, "unavailable", "integrity-failure") from exc
+        except AuditUnavailable as exc:
+            raise _error(503, "unavailable", "audit-unavailable") from exc
 
     @app.post("/v1/workspaces/{workspace_id}/secrets/{secret_id}/rotate")
     def rotate_secret(
@@ -671,6 +834,23 @@ def _durable_metadata_intent(metadata: SecretMetadata) -> str | None:
     if intent in ALLOWED_SECRET_USE_INTENTS:
         return intent
     return None
+
+
+def _valid_secret_reference(value: str) -> bool:
+    parsed = urlsplit(value)
+    path = tuple(part for part in parsed.path.split("/") if part)
+    return bool(
+        parsed.scheme == "secret"
+        and _REFERENCE_PROVIDER.fullmatch(parsed.netloc)
+        and not parsed.query
+        and not parsed.fragment
+        and path
+        and parsed.path == "/" + "/".join(path)
+        and all(
+            part not in {".", ".."} and _REFERENCE_SEGMENT.fullmatch(part)
+            for part in path
+        )
+    )
 
 
 def _require(
