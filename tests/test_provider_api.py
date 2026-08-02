@@ -19,6 +19,135 @@ from control_plane_kit_secrets.store import EncryptedSecretStore
 
 
 class ProviderApiTests(unittest.TestCase):
+    def test_exact_version_revocation_is_authorized_audited_and_idempotent(
+        self,
+    ) -> None:
+        with _client() as fixture:
+            first = fixture.store.create_secret(
+                workspace_id="workspace-1",
+                secret_id="gateway-rotation-key",
+                value=b"private-key-a",
+                labels={"intent": "gateway.probe-signing-key"},
+            )
+            second = fixture.store.rotate_secret(
+                workspace_id="workspace-1",
+                secret_id="gateway-rotation-key",
+                value=b"private-key-b",
+                labels={"intent": "gateway.probe-signing-key"},
+            )
+            path = (
+                "/v1/workspaces/workspace-1/secrets/gateway-rotation-key/"
+                f"versions/{first.version_id}/revoke"
+            )
+            body = {
+                "version_number": first.version_number,
+                "caller_subject": "rotation-program",
+                "correlation_id": "retire-key-a",
+            }
+
+            wrong_workspace = fixture.client.post(
+                path.replace("workspace-1", "workspace-2"),
+                headers=fixture.headers("revoke-token"),
+                json=body,
+            )
+            denied = fixture.client.post(
+                path,
+                headers=fixture.headers("writer-token"),
+                json=body,
+            )
+            wrong_number = fixture.client.post(
+                path,
+                headers=fixture.headers("revoke-token"),
+                json={**body, "version_number": 2},
+            )
+            missing = fixture.client.post(
+                path.replace(first.version_id, "missing-version"),
+                headers=fixture.headers("revoke-token"),
+                json=body,
+            )
+            revoked = fixture.client.post(
+                path,
+                headers=fixture.headers("revoke-token"),
+                json=body,
+            )
+            replayed = fixture.client.post(
+                path,
+                headers=fixture.headers("revoke-token"),
+                json=body,
+            )
+            conflict = fixture.client.post(
+                path,
+                headers=fixture.headers("revoke-token"),
+                json={**body, "correlation_id": "other-retirement"},
+            )
+
+            self.assertEqual(wrong_workspace.status_code, 403, wrong_workspace.text)
+            self.assertEqual(denied.status_code, 403, denied.text)
+            self.assertEqual(wrong_number.status_code, 409, wrong_number.text)
+            self.assertEqual(missing.status_code, 404, missing.text)
+            self.assertEqual(revoked.status_code, 200, revoked.text)
+            self.assertEqual(replayed.status_code, 200, replayed.text)
+            self.assertEqual(revoked.json(), replayed.json())
+            self.assertEqual(revoked.json()["metadata"]["status"], "revoked")
+            self.assertEqual(conflict.status_code, 409, conflict.text)
+            self.assertEqual(
+                conflict.json()["detail"]["code"],
+                "version-revocation-conflict",
+            )
+            self.assertEqual(
+                fixture.store.resolve_secret(
+                    workspace_id="workspace-1",
+                    secret_id="gateway-rotation-key",
+                    version_id=second.version_id,
+                ).value,
+                b"private-key-b",
+            )
+            rows = [
+                row
+                for row in fixture.audit_rows()
+                if row["correlation_id"] == "retire-key-a"
+            ]
+            self.assertEqual(len(rows), 2)
+            self.assertEqual(rows[0]["version_id"], first.version_id)
+            self.assertNotIn("private-key", repr(rows))
+
+    def test_exact_version_revocation_audit_failure_rolls_back(self) -> None:
+        with _client(audit_store_factory=lambda _path: _FailingAuditStore()) as fixture:
+            version = fixture.store.create_secret(
+                workspace_id="workspace-1",
+                secret_id="gateway-rotation-key",
+                value=b"private-key-a",
+                labels={"intent": "gateway.probe-signing-key"},
+            )
+
+            response = fixture.client.post(
+                (
+                    "/v1/workspaces/workspace-1/secrets/gateway-rotation-key/"
+                    f"versions/{version.version_id}/revoke"
+                ),
+                headers=fixture.headers("revoke-token"),
+                json={
+                    "version_number": 1,
+                    "caller_subject": "rotation-program",
+                    "correlation_id": "retire-key-a",
+                },
+            )
+
+            self.assertEqual(response.status_code, 503, response.text)
+            self.assertEqual(
+                response.json()["detail"]["code"],
+                "audit-unavailable",
+            )
+            self.assertEqual(
+                fixture.store.resolve_secret(
+                    workspace_id="workspace-1",
+                    secret_id="gateway-rotation-key",
+                    version_id=version.version_id,
+                ).value,
+                b"private-key-a",
+            )
+            self.assertNotIn("private-key-a", response.text)
+
     def test_provider_generates_delegation_key_and_returns_only_public_material(
         self,
     ) -> None:

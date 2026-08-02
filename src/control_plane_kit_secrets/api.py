@@ -27,6 +27,7 @@ from .models import (
     SecretResolutionConflict,
     SecretRevoked,
     SecretTampered,
+    SecretVersionRevocationConflict,
 )
 from .store import (
     EncryptedSecretStore,
@@ -83,6 +84,12 @@ class SecretResolveRequest(BaseModel):
 class SecretRevokeRequest(BaseModel):
     caller_subject: str | None = Field(default=None, max_length=128)
     correlation_id: str | None = Field(default=None, max_length=MAX_CORRELATION_CHARS)
+
+
+class SecretVersionRevokeRequest(BaseModel):
+    version_number: int = Field(ge=1)
+    caller_subject: str = Field(min_length=1, max_length=128)
+    correlation_id: str = Field(min_length=1, max_length=MAX_CORRELATION_CHARS)
 
 
 class DelegationKeyGenerateRequest(BaseModel):
@@ -676,6 +683,44 @@ def create_app(
                 code="integrity-failure",
             )
             raise _error(503, "unavailable", "integrity-failure") from exc
+
+    @app.post(
+        "/v1/workspaces/{workspace_id}/secrets/{secret_id}/"
+        "versions/{version_id}/revoke"
+    )
+    def revoke_secret_version(
+        workspace_id: str,
+        secret_id: str,
+        version_id: str,
+        request: SecretVersionRevokeRequest,
+        client: ProviderCredential = Depends(credential),
+    ) -> dict[str, Any]:
+        _require(authorizer, client, action="secret.revoke", workspace_id=workspace_id)
+        try:
+            revoked = store.revoke_secret_version(
+                workspace_id=workspace_id,
+                secret_id=secret_id,
+                version_id=version_id,
+                version_number=request.version_number,
+                caller_subject=request.caller_subject,
+                correlation_id=request.correlation_id,
+                provider_id=provider_id,
+                audit_store=audit_store,
+            )
+            return {
+                "outcome": "revoked",
+                "metadata": _metadata_response(revoked),
+            }
+        except SecretVersionRevocationConflict as exc:
+            raise _error(409, "conflict", "version-revocation-conflict") from exc
+        except SecretRevoked as exc:
+            raise _error(409, "conflict", "secret-revoked") from exc
+        except SecretMissing as exc:
+            raise _error(404, "missing", "secret-missing") from exc
+        except SecretTampered as exc:
+            raise _error(503, "unavailable", "integrity-failure") from exc
+        except AuditUnavailable as exc:
+            raise _error(503, "unavailable", "audit-unavailable") from exc
 
     @app.post("/v1/workspaces/{workspace_id}/secrets/{secret_id}/revoke")
     def revoke_secret(

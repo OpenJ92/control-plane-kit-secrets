@@ -30,6 +30,13 @@ class SecretResolutionConflict(SecretStoreError):
         super().__init__("secret resolution correlation conflicts with prior use")
 
 
+class SecretVersionRevocationConflict(SecretStoreError):
+    def __init__(self) -> None:
+        super().__init__(
+            "secret version revocation conflicts with prior durable intent"
+        )
+
+
 class DelegationKeyGenerationConflict(SecretStoreError):
     def __init__(self) -> None:
         super().__init__(

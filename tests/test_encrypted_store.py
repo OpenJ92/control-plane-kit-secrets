@@ -24,7 +24,9 @@ from control_plane_kit_secrets.models import (
     SecretRevoked,
     SecretStatus,
     SecretTampered,
+    SecretVersionRevocationConflict,
 )
+from control_plane_kit_secrets.audit import SqliteAuditStore
 from control_plane_kit_secrets.store import EncryptedSecretStore
 
 
@@ -224,6 +226,85 @@ class EncryptedSecretStoreTests(unittest.TestCase):
                 ).value,
                 b"old-token",
             )
+
+    def test_exact_version_revocation_preserves_other_versions_and_replays(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            paths = _paths(directory)
+            key = _write_key(paths["key"])
+            store = EncryptedSecretStore(paths["db"], master_key=key)
+            store.initialize()
+            audit = SqliteAuditStore(paths["db"])
+            audit.initialize()
+            first = store.create_secret(
+                workspace_id="workspace-1",
+                secret_id="gateway-key",
+                value=b"private-key-a",
+                labels={"intent": "gateway.probe-signing-key"},
+            )
+            second = store.rotate_secret(
+                workspace_id="workspace-1",
+                secret_id="gateway-key",
+                value=b"private-key-b",
+                labels={"intent": "gateway.probe-signing-key"},
+            )
+
+            revoked = store.revoke_secret_version(
+                workspace_id="workspace-1",
+                secret_id="gateway-key",
+                version_id=first.version_id,
+                version_number=first.version_number,
+                caller_subject="rotation-program",
+                correlation_id="retire-key-a",
+                provider_id="provider-a",
+                audit_store=audit,
+            )
+            restarted = EncryptedSecretStore(paths["db"], master_key=key)
+            restarted.initialize()
+            replayed = restarted.revoke_secret_version(
+                workspace_id="workspace-1",
+                secret_id="gateway-key",
+                version_id=first.version_id,
+                version_number=first.version_number,
+                caller_subject="rotation-program",
+                correlation_id="retire-key-a",
+                provider_id="provider-a",
+                audit_store=audit,
+            )
+
+            self.assertEqual(revoked, replayed)
+            self.assertEqual(revoked.status, SecretStatus.REVOKED)
+            with self.assertRaises(SecretRevoked):
+                restarted.resolve_secret(
+                    workspace_id="workspace-1",
+                    secret_id="gateway-key",
+                    version_id=first.version_id,
+                )
+            self.assertEqual(
+                restarted.resolve_secret(
+                    workspace_id="workspace-1",
+                    secret_id="gateway-key",
+                    version_id=second.version_id,
+                ).value,
+                b"private-key-b",
+            )
+            with self.assertRaises(SecretVersionRevocationConflict):
+                restarted.revoke_secret_version(
+                    workspace_id="workspace-1",
+                    secret_id="gateway-key",
+                    version_id=first.version_id,
+                    version_number=first.version_number,
+                    caller_subject="rotation-program",
+                    correlation_id="different-retirement",
+                    provider_id="provider-a",
+                    audit_store=audit,
+                )
+
+            rows = audit.rows_for_tests()
+            self.assertEqual(
+                [row["code"] for row in rows],
+                ["secret-version-revoked", "secret-version-revocation-replayed"],
+            )
+            self.assertNotIn("private-key", repr(rows))
 
     def test_resolution_correlation_pins_first_version_across_rotation_and_restart(
         self,
