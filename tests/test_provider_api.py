@@ -7,15 +7,137 @@ import unittest
 from pathlib import Path
 
 from fastapi.testclient import TestClient
+from cryptography.hazmat.primitives import serialization
+from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PublicKey
 
 from control_plane_kit_secrets.api import create_app
 from control_plane_kit_secrets.audit import AuditUnavailable, SqliteAuditStore
 from control_plane_kit_secrets.auth import ProviderCredential, ProviderGrant
 from control_plane_kit_secrets.crypto import encode_master_key_for_file, load_master_key_file
+from control_plane_kit_secrets.models import SecretMissing
 from control_plane_kit_secrets.store import EncryptedSecretStore
 
 
 class ProviderApiTests(unittest.TestCase):
+    def test_provider_generates_delegation_key_and_returns_only_public_material(
+        self,
+    ) -> None:
+        with _client() as fixture:
+            response = fixture.generate_delegation_key()
+
+            self.assertEqual(response.status_code, 200, response.text)
+            payload = response.json()
+            self.assertEqual(payload["outcome"], "generated")
+            self.assertEqual(payload["purpose"], "gateway-probe")
+            self.assertEqual(payload["algorithm"], "ed25519")
+            self.assertEqual(payload["correlation_id"], "rotation-key-b")
+            self.assertIn("BEGIN PUBLIC KEY", payload["public_key_pem"])
+            self.assertNotIn("PRIVATE", response.text)
+            self.assertNotIn("value_base64", response.text)
+
+            resolved = fixture.client.post(
+                "/v1/workspaces/workspace-1/secrets/gateway-key-b/resolve",
+                headers=fixture.headers("resolver-token"),
+                json={
+                    "intent": "gateway.probe-signing-key",
+                    "caller_subject": "gateway-probe-signer",
+                    "correlation_id": "sign-generated-key-b",
+                },
+            )
+            self.assertEqual(resolved.status_code, 200, resolved.text)
+            private_key = serialization.load_pem_private_key(
+                base64.b64decode(resolved.json()["value_base64"]),
+                password=None,
+            )
+            public_key = serialization.load_pem_public_key(
+                payload["public_key_pem"].encode("ascii")
+            )
+            self.assertIsInstance(public_key, Ed25519PublicKey)
+            message = b"bounded-gateway-probe"
+            signature = private_key.sign(message)
+            public_key.verify(signature, message)
+            self.assertNotIn("BEGIN PRIVATE KEY", repr(fixture.audit_rows()))
+
+    def test_generation_correlation_is_idempotent_and_semantically_pinned(
+        self,
+    ) -> None:
+        with _client() as fixture:
+            first = fixture.generate_delegation_key()
+            replay = fixture.generate_delegation_key()
+            conflict = fixture.generate_delegation_key(issuer="other-issuer")
+
+            self.assertEqual(first.status_code, 200, first.text)
+            self.assertEqual(replay.status_code, 200, replay.text)
+            self.assertEqual(
+                first.json()["public_key_pem"], replay.json()["public_key_pem"]
+            )
+            self.assertEqual(first.json()["key_id"], replay.json()["key_id"])
+            self.assertFalse(first.json()["replayed"])
+            self.assertTrue(replay.json()["replayed"])
+            self.assertEqual(conflict.status_code, 409, conflict.text)
+            self.assertEqual(
+                conflict.json()["detail"]["code"],
+                "generation-correlation-conflict",
+            )
+            self.assertEqual(len(fixture.store.raw_rows_for_tests()), 1)
+
+    def test_generation_permission_is_distinct_from_write_and_execution(self) -> None:
+        with _client() as fixture:
+            for token in ("writer-token", "execution-token"):
+                with self.subTest(token=token):
+                    response = fixture.generate_delegation_key(token=token)
+                    self.assertEqual(response.status_code, 403, response.text)
+            wrong_workspace = fixture.generate_delegation_key(
+                workspace_id="workspace-2"
+            )
+            unsupported_purpose = fixture.generate_delegation_key(
+                purpose="arbitrary-signing"
+            )
+            self.assertEqual(wrong_workspace.status_code, 403, wrong_workspace.text)
+            self.assertEqual(
+                unsupported_purpose.status_code,
+                400,
+                unsupported_purpose.text,
+            )
+            generated = fixture.generate_delegation_key()
+            self.assertEqual(generated.status_code, 200, generated.text)
+
+    def test_duplicate_secret_identity_and_revoked_replay_are_bounded(self) -> None:
+        with _client() as fixture:
+            generated = fixture.generate_delegation_key()
+            duplicate = fixture.generate_delegation_key(correlation_id="other-key")
+            self.assertEqual(generated.status_code, 200, generated.text)
+            self.assertEqual(duplicate.status_code, 409, duplicate.text)
+            self.assertEqual(
+                duplicate.json()["detail"]["code"], "secret-already-exists"
+            )
+
+            revoked = fixture.client.post(
+                "/v1/workspaces/workspace-1/secrets/gateway-key-b/revoke",
+                headers=fixture.headers("revoke-token"),
+                json={
+                    "caller_subject": "cpk-server",
+                    "correlation_id": "revoke-key-b",
+                },
+            )
+            replay = fixture.generate_delegation_key()
+            self.assertEqual(revoked.status_code, 200, revoked.text)
+            self.assertEqual(replay.status_code, 409, replay.text)
+            self.assertEqual(replay.json()["detail"]["code"], "secret-revoked")
+
+    def test_atomic_audit_failure_rolls_back_generated_private_custody(self) -> None:
+        with _client(audit_store_factory=lambda _path: _FailingAuditStore()) as fixture:
+            response = fixture.generate_delegation_key()
+
+            self.assertEqual(response.status_code, 503, response.text)
+            self.assertEqual(response.json()["detail"]["code"], "audit-unavailable")
+            self.assertEqual(fixture.store.raw_rows_for_tests(), [])
+            with self.assertRaises(SecretMissing):
+                fixture.store.metadata(
+                    workspace_id="workspace-1",
+                    secret_id="gateway-key-b",
+                )
+
     def test_write_and_metadata_read_are_authenticated_and_redacted(self) -> None:
         with _client() as fixture:
             sentinel = b"cloudflare-api-token-super-secret"
@@ -589,6 +711,17 @@ class _ApiFixture:
                         ),
                     ),
                     ProviderCredential(
+                        subject="delegation-key-generator",
+                        token="generation-token",
+                        grants=(
+                            ProviderGrant(
+                                "secret.generate-delegation-key",
+                                "workspace-1",
+                                ("gateway.probe-signing-key",),
+                            ),
+                        ),
+                    ),
+                    ProviderCredential(
                         subject="executor",
                         token="execution-token",
                         grants=(
@@ -632,6 +765,27 @@ class _ApiFixture:
     def audit_rows(self) -> list[dict[str, object]]:
         return self.audit_store.rows_for_tests()
 
+    def generate_delegation_key(
+        self,
+        *,
+        token: str = "generation-token",
+        issuer: str = "cpk-server",
+        workspace_id: str = "workspace-1",
+        purpose: str = "gateway-probe",
+        correlation_id: str = "rotation-key-b",
+    ):
+        return self.client.post(
+            f"/v1/workspaces/{workspace_id}/delegation-keys/gateway-key-b/generate",
+            headers=self.headers(token),
+            json={
+                "secret_reference": "secret://workspace-secrets/keys/gateway-b",
+                "purpose": purpose,
+                "issuer": issuer,
+                "caller_subject": "cpk-server",
+                "correlation_id": correlation_id,
+            },
+        )
+
 
 def _client(*, audit_store_factory: object | None = None) -> _ApiFixture:
     return _ApiFixture(audit_store_factory=audit_store_factory)
@@ -642,6 +796,9 @@ class _FailingAuditStore:
         return None
 
     def append(self, record: object) -> None:
+        raise AuditUnavailable()
+
+    def append_in_transaction(self, connection: object, record: object) -> None:
         raise AuditUnavailable()
 
     def rows_for_tests(self) -> list[dict[str, object]]:

@@ -88,6 +88,40 @@ class SqliteAuditStore:
         except sqlite3.Error as exc:
             raise AuditUnavailable() from exc
 
+    def append_in_transaction(
+        self,
+        connection: sqlite3.Connection,
+        record: AuditRecord,
+    ) -> None:
+        """Append through a caller-owned provider transaction."""
+
+        try:
+            connection.execute(
+                """
+                INSERT INTO audit_records (
+                    event_id, provider_id, workspace_id, secret_id, version_id,
+                    intent, caller_subject, correlation_id, outcome, code,
+                    occurred_at
+                )
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    record.event_id,
+                    record.provider_id,
+                    record.workspace_id,
+                    record.secret_id,
+                    record.version_id,
+                    record.intent,
+                    record.caller_subject,
+                    record.correlation_id,
+                    record.outcome,
+                    record.code,
+                    record.occurred_at,
+                ),
+            )
+        except sqlite3.Error as exc:
+            raise AuditUnavailable() from exc
+
     def rows_for_tests(self) -> list[dict[str, Any]]:
         with self._connection() as connection:
             rows = connection.execute(

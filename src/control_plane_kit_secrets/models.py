@@ -30,6 +30,13 @@ class SecretResolutionConflict(SecretStoreError):
         super().__init__("secret resolution correlation conflicts with prior use")
 
 
+class DelegationKeyGenerationConflict(SecretStoreError):
+    def __init__(self) -> None:
+        super().__init__(
+            "delegation key generation correlation conflicts with prior use"
+        )
+
+
 class SecretIntentMismatch(SecretStoreError):
     def __init__(self) -> None:
         super().__init__("secret intent does not match durable metadata")
@@ -85,3 +92,18 @@ class ResolvedSecret:
             f"version_id={self.metadata.version_id!r}, "
             "value=<redacted>)"
         )
+
+
+@dataclass(frozen=True)
+class GeneratedDelegationKey:
+    """Public generation result; private material remains in encrypted custody."""
+
+    metadata: SecretMetadata
+    secret_reference: str
+    purpose: str
+    issuer: str
+    correlation_id: str
+    key_id: str
+    algorithm: str
+    public_key_pem: str
+    replayed: bool = False
