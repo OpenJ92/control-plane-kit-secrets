@@ -27,6 +27,7 @@ from .models import (
     SecretRevoked,
     SecretStatus,
     SecretTampered,
+    SecretVersionRevocationConflict,
 )
 
 NONCE_BYTES = 12
@@ -109,6 +110,27 @@ class EncryptedSecretStore:
                     generated_at TEXT NOT NULL,
                     PRIMARY KEY (workspace_id, correlation_id),
                     UNIQUE (workspace_id, secret_id),
+                    FOREIGN KEY (workspace_id, secret_id, version_id)
+                      REFERENCES secret_versions (
+                        workspace_id,
+                        secret_id,
+                        version_id
+                      )
+                )
+                """
+            )
+            connection.execute(
+                """
+                CREATE TABLE IF NOT EXISTS secret_version_revocations (
+                    workspace_id TEXT NOT NULL,
+                    correlation_id TEXT NOT NULL,
+                    secret_id TEXT NOT NULL,
+                    version_id TEXT NOT NULL,
+                    version_number INTEGER NOT NULL,
+                    caller_subject TEXT NOT NULL,
+                    revoked_at TEXT NOT NULL,
+                    PRIMARY KEY (workspace_id, correlation_id),
+                    UNIQUE (workspace_id, secret_id, version_id),
                     FOREIGN KEY (workspace_id, secret_id, version_id)
                       REFERENCES secret_versions (
                         workspace_id,
@@ -313,44 +335,140 @@ class EncryptedSecretStore:
                 if metadata.status is SecretStatus.REVOKED:
                     revoked.append(metadata)
                     continue
-                plaintext = self._decrypt_row(row)
-                revoked_metadata = SecretMetadata(
-                    workspace_id=metadata.workspace_id,
-                    secret_id=metadata.secret_id,
-                    version_id=metadata.version_id,
-                    version_number=metadata.version_number,
-                    status=SecretStatus.REVOKED,
-                    algorithm=metadata.algorithm,
-                    key_fingerprint=metadata.key_fingerprint,
-                    key_version=metadata.key_version,
-                    labels=metadata.labels,
-                    created_at=metadata.created_at,
+                revoked_metadata = self._revoke_row(
+                    connection,
+                    row,
                     revoked_at=now,
-                )
-                nonce = os.urandom(NONCE_BYTES)
-                ciphertext = self._master_key.encrypt(
-                    nonce=nonce,
-                    plaintext=plaintext,
-                    aad=self._aad(revoked_metadata),
-                )
-                connection.execute(
-                    """
-                    UPDATE secret_versions
-                    SET status = ?, nonce = ?, ciphertext = ?, revoked_at = ?
-                    WHERE workspace_id = ? AND secret_id = ? AND version_id = ?
-                    """,
-                    (
-                        SecretStatus.REVOKED.value,
-                        nonce,
-                        ciphertext,
-                        now,
-                        workspace_id,
-                        secret_id,
-                        metadata.version_id,
-                    ),
                 )
                 revoked.append(revoked_metadata)
         return revoked
+
+    def revoke_secret_version(
+        self,
+        *,
+        workspace_id: str,
+        secret_id: str,
+        version_id: str,
+        version_number: int,
+        caller_subject: str,
+        correlation_id: str,
+        provider_id: str,
+        audit_store: SqliteAuditStore,
+    ) -> SecretMetadata:
+        """Revoke, correlate, and audit one exact version atomically."""
+
+        with self._connection() as connection:
+            connection.execute("BEGIN IMMEDIATE")
+            existing = connection.execute(
+                """
+                SELECT secret_id, version_id, version_number, caller_subject
+                FROM secret_version_revocations
+                WHERE workspace_id = ? AND correlation_id = ?
+                """,
+                (workspace_id, correlation_id),
+            ).fetchone()
+            if existing is not None:
+                if (
+                    str(existing["secret_id"]) != secret_id
+                    or str(existing["version_id"]) != version_id
+                    or int(existing["version_number"]) != version_number
+                    or str(existing["caller_subject"]) != caller_subject
+                ):
+                    raise SecretVersionRevocationConflict()
+                row = self._select_row_with_connection(
+                    connection,
+                    workspace_id=workspace_id,
+                    secret_id=secret_id,
+                    version_id=version_id,
+                )
+                if row is None:
+                    raise SecretMissing()
+                metadata = self._metadata_from_row(row)
+                if (
+                    metadata.version_number != version_number
+                    or metadata.status is not SecretStatus.REVOKED
+                ):
+                    raise SecretVersionRevocationConflict()
+                audit_store.append_in_transaction(
+                    connection,
+                    audit_record(
+                        provider_id=provider_id,
+                        workspace_id=workspace_id,
+                        secret_id=secret_id,
+                        version_id=version_id,
+                        intent=metadata.labels.get("intent"),
+                        caller_subject=caller_subject,
+                        correlation_id=correlation_id,
+                        outcome="replayed",
+                        code="secret-version-revocation-replayed",
+                    ),
+                )
+                return metadata
+
+            prior_target = connection.execute(
+                """
+                SELECT correlation_id
+                FROM secret_version_revocations
+                WHERE workspace_id = ? AND secret_id = ? AND version_id = ?
+                """,
+                (workspace_id, secret_id, version_id),
+            ).fetchone()
+            if prior_target is not None:
+                raise SecretVersionRevocationConflict()
+
+            row = self._select_row_with_connection(
+                connection,
+                workspace_id=workspace_id,
+                secret_id=secret_id,
+                version_id=version_id,
+            )
+            if row is None:
+                raise SecretMissing()
+            metadata = self._metadata_from_row(row)
+            if metadata.version_number != version_number:
+                raise SecretVersionRevocationConflict()
+            if metadata.status is SecretStatus.REVOKED:
+                raise SecretRevoked()
+
+            revoked_at = _now()
+            revoked_metadata = self._revoke_row(
+                connection,
+                row,
+                revoked_at=revoked_at,
+            )
+            connection.execute(
+                """
+                INSERT INTO secret_version_revocations (
+                    workspace_id, correlation_id, secret_id, version_id,
+                    version_number, caller_subject, revoked_at
+                )
+                VALUES (?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    workspace_id,
+                    correlation_id,
+                    secret_id,
+                    version_id,
+                    version_number,
+                    caller_subject,
+                    revoked_at,
+                ),
+            )
+            audit_store.append_in_transaction(
+                connection,
+                audit_record(
+                    provider_id=provider_id,
+                    workspace_id=workspace_id,
+                    secret_id=secret_id,
+                    version_id=version_id,
+                    intent=revoked_metadata.labels.get("intent"),
+                    caller_subject=caller_subject,
+                    correlation_id=correlation_id,
+                    outcome="revoked",
+                    code="secret-version-revoked",
+                ),
+            )
+            return revoked_metadata
 
     def metadata(
         self,
@@ -580,6 +698,52 @@ class EncryptedSecretStore:
         except sqlite3.IntegrityError as exc:
             raise SecretAlreadyExists() from exc
         return metadata
+
+    def _revoke_row(
+        self,
+        connection: sqlite3.Connection,
+        row: sqlite3.Row,
+        *,
+        revoked_at: str,
+    ) -> SecretMetadata:
+        metadata = self._metadata_from_row(row)
+        plaintext = self._decrypt_row(row)
+        revoked_metadata = SecretMetadata(
+            workspace_id=metadata.workspace_id,
+            secret_id=metadata.secret_id,
+            version_id=metadata.version_id,
+            version_number=metadata.version_number,
+            status=SecretStatus.REVOKED,
+            algorithm=metadata.algorithm,
+            key_fingerprint=metadata.key_fingerprint,
+            key_version=metadata.key_version,
+            labels=metadata.labels,
+            created_at=metadata.created_at,
+            revoked_at=revoked_at,
+        )
+        nonce = os.urandom(NONCE_BYTES)
+        ciphertext = self._master_key.encrypt(
+            nonce=nonce,
+            plaintext=plaintext,
+            aad=self._aad(revoked_metadata),
+        )
+        connection.execute(
+            """
+            UPDATE secret_versions
+            SET status = ?, nonce = ?, ciphertext = ?, revoked_at = ?
+            WHERE workspace_id = ? AND secret_id = ? AND version_id = ?
+            """,
+            (
+                SecretStatus.REVOKED.value,
+                nonce,
+                ciphertext,
+                revoked_at,
+                metadata.workspace_id,
+                metadata.secret_id,
+                metadata.version_id,
+            ),
+        )
+        return revoked_metadata
 
     def _select_row(
         self,

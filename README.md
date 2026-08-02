@@ -34,6 +34,24 @@ normal use-specific provider route. Exact retries return the original public
 identity. Reusing a correlation for different semantics fails closed, and a
 revoked generated reference cannot be replayed into service.
 
+## Exact Version Revocation
+
+Whole-reference revocation remains available for retiring an entire secret.
+Key rotation uses a separate exact-version route so retiring version A cannot
+revoke active version B:
+
+```text
+workspace + secret id + version id/number + actor + correlation
+  -> revoke exactly one encrypted version
+    -> persist replay binding and provider-local audit atomically
+      -> return bounded revoked-version metadata
+```
+
+Exact replay returns the same metadata after restart. Correlation reuse with a
+different target or actor fails closed, as does attempting to claim an already
+revoked version under a new correlation. No secret value enters the request,
+response, replay record, or audit record.
+
 ```text
 #1169 restart/rotation/revocation acceptance
 ```
