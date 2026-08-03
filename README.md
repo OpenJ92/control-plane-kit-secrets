@@ -126,3 +126,16 @@ Run:
 ```
 
 The test harness is Docker-first and uses `unittest`.
+
+The package gate is also the CI contract. It runs, in order:
+
+1. the package-integrity contract's adversarial tests;
+2. an integrity scan of current source, tests, and `test.sh`;
+3. the package image build;
+4. compileall and all provider tests, including the real process restart test;
+5. a clean installed-package import outside the source tree.
+
+The integrity stage fails closed on hidden unittest collection, unapproved
+skips, placeholder tests, swallowed exceptions, mutable legacy imports,
+pytest, and proof-changing optional modes. It reports mock use as review
+evidence without treating every mock as a failure.
