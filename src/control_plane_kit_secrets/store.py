@@ -14,7 +14,7 @@ from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 
 from .audit import SqliteAuditStore, audit_record
 from .crypto import ALGORITHM, MasterKey, SecretCryptoError
-from .delegation_signing import (
+from ._delegation_signing import (
     GATEWAY_DELEGATION_PURPOSE,
     GATEWAY_SIGNING_INTENT,
     require_delegation_signing_family,

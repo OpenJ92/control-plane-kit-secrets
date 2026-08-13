@@ -17,7 +17,7 @@ from .auth import (
     ProviderCredential,
     SecretUseDenied,
 )
-from .delegation_signing import delegation_signing_intent_for
+from ._delegation_signing import delegation_signing_intent_for
 from .models import (
     DelegationKeyGenerationConflict,
     SecretAlreadyExists,
