@@ -14,6 +14,11 @@ from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 
 from .audit import SqliteAuditStore, audit_record
 from .crypto import ALGORITHM, MasterKey, SecretCryptoError
+from .delegation_signing import (
+    GATEWAY_DELEGATION_PURPOSE,
+    GATEWAY_SIGNING_INTENT,
+    require_delegation_signing_family,
+)
 from .models import (
     DelegationKeyGenerationConflict,
     GeneratedDelegationKey,
@@ -35,8 +40,6 @@ MAX_LABELS = 16
 MAX_LABEL_KEY_CHARS = 64
 MAX_LABEL_VALUE_CHARS = 256
 DELEGATION_KEY_ALGORITHM = "ed25519"
-GATEWAY_DELEGATION_PURPOSE = "gateway-probe"
-GATEWAY_SIGNING_INTENT = "gateway.probe-signing-key"
 
 
 class EncryptedSecretStore:
@@ -148,6 +151,7 @@ class EncryptedSecretStore:
         secret_id: str,
         secret_reference: str,
         purpose: str,
+        intent: str,
         issuer: str,
         caller_subject: str,
         correlation_id: str,
@@ -156,6 +160,7 @@ class EncryptedSecretStore:
     ) -> GeneratedDelegationKey:
         """Generate, encrypt, correlate, and audit one key atomically."""
 
+        admitted_intent = require_delegation_signing_family(purpose, intent)
         with self._connection() as connection:
             connection.execute("BEGIN IMMEDIATE")
             existing = connection.execute(
@@ -178,6 +183,7 @@ class EncryptedSecretStore:
                 result = self._delegation_generation_from_row(
                     connection,
                     existing,
+                    expected_intent=admitted_intent,
                     replayed=True,
                 )
                 audit_store.append_in_transaction(
@@ -187,7 +193,7 @@ class EncryptedSecretStore:
                         workspace_id=workspace_id,
                         secret_id=secret_id,
                         version_id=result.metadata.version_id,
-                        intent=GATEWAY_SIGNING_INTENT,
+                        intent=admitted_intent,
                         caller_subject=caller_subject,
                         correlation_id=correlation_id,
                         outcome="replayed",
@@ -213,7 +219,7 @@ class EncryptedSecretStore:
                 secret_id=secret_id,
                 value=private_pem,
                 labels={
-                    "intent": GATEWAY_SIGNING_INTENT,
+                    "intent": admitted_intent,
                     "purpose": purpose,
                     "issuer": issuer,
                     "key_id": key_id,
@@ -251,7 +257,7 @@ class EncryptedSecretStore:
                     workspace_id=workspace_id,
                     secret_id=secret_id,
                     version_id=metadata.version_id,
-                    intent=GATEWAY_SIGNING_INTENT,
+                    intent=admitted_intent,
                     caller_subject=caller_subject,
                     correlation_id=correlation_id,
                     outcome="generated",
@@ -614,6 +620,7 @@ class EncryptedSecretStore:
         connection: sqlite3.Connection,
         row: sqlite3.Row,
         *,
+        expected_intent: str,
         replayed: bool,
     ) -> GeneratedDelegationKey:
         secret_row = self._select_row_with_connection(
@@ -624,19 +631,46 @@ class EncryptedSecretStore:
         )
         if secret_row is None:
             raise SecretMissing()
-        metadata = self._metadata_from_row(secret_row)
+        try:
+            metadata = self._metadata_from_row(secret_row)
+        except (json.JSONDecodeError, KeyError, TypeError, ValueError):
+            metadata = None
+        if metadata is None:
+            raise SecretTampered()
         if metadata.status is SecretStatus.REVOKED:
             raise SecretRevoked()
-        self._decrypt_row(secret_row)
+        purpose = str(row["purpose"])
+        issuer = str(row["issuer"])
+        key_id = str(row["key_id"])
+        algorithm = str(row["algorithm"])
+        public_key_pem = str(row["public_key_pem"])
+        if (
+            dict(metadata.labels)
+            != {
+                "intent": expected_intent,
+                "purpose": purpose,
+                "issuer": issuer,
+                "key_id": key_id,
+            }
+            or algorithm != DELEGATION_KEY_ALGORITHM
+        ):
+            raise SecretTampered()
+        private_pem = self._decrypt_row(secret_row)
+        if not _delegation_material_matches(
+            private_pem=private_pem,
+            public_key_pem=public_key_pem,
+            key_id=key_id,
+        ):
+            raise SecretTampered()
         return GeneratedDelegationKey(
             metadata=metadata,
             secret_reference=str(row["secret_reference"]),
-            purpose=str(row["purpose"]),
-            issuer=str(row["issuer"]),
+            purpose=purpose,
+            issuer=issuer,
             correlation_id=str(row["correlation_id"]),
-            key_id=str(row["key_id"]),
-            algorithm=str(row["algorithm"]),
-            public_key_pem=str(row["public_key_pem"]),
+            key_id=key_id,
+            algorithm=algorithm,
+            public_key_pem=public_key_pem,
             replayed=replayed,
         )
 
@@ -901,3 +935,28 @@ def _delegation_key_id(public_key_pem: str) -> str:
     from hashlib import sha256
 
     return f"gateway-{sha256(public_key_pem.encode('ascii')).hexdigest()}"
+
+
+def _delegation_material_matches(
+    *,
+    private_pem: bytes,
+    public_key_pem: str,
+    key_id: str,
+) -> bool:
+    try:
+        private_key = serialization.load_pem_private_key(
+            private_pem,
+            password=None,
+        )
+        if not isinstance(private_key, Ed25519PrivateKey):
+            return False
+        derived_public = private_key.public_key().public_bytes(
+            encoding=serialization.Encoding.PEM,
+            format=serialization.PublicFormat.SubjectPublicKeyInfo,
+        ).decode("ascii")
+        return (
+            derived_public == public_key_pem
+            and _delegation_key_id(public_key_pem) == key_id
+        )
+    except (TypeError, ValueError, UnicodeError):
+        return False

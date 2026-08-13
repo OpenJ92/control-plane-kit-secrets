@@ -17,6 +17,7 @@ from .auth import (
     ProviderCredential,
     SecretUseDenied,
 )
+from .delegation_signing import delegation_signing_intent_for
 from .models import (
     DelegationKeyGenerationConflict,
     SecretAlreadyExists,
@@ -29,11 +30,7 @@ from .models import (
     SecretTampered,
     SecretVersionRevocationConflict,
 )
-from .store import (
-    EncryptedSecretStore,
-    GATEWAY_DELEGATION_PURPOSE,
-    GATEWAY_SIGNING_INTENT,
-)
+from .store import EncryptedSecretStore
 
 
 MAX_SECRET_BYTES = 64 * 1024
@@ -52,8 +49,10 @@ ALLOWED_SECRET_USE_INTENTS = frozenset(
         "docker.remote-tls.client-certificate",
         "docker.remote-tls.client-key",
         "gateway.probe-signing-key",
+        "gateway.node-control-transit-signing-key",
         "oci.pull-credential",
         "postgres.password",
+        "workload.node-control-signing-key",
     }
 )
 
@@ -249,9 +248,28 @@ def create_app(
         request: DelegationKeyGenerateRequest,
         client: ProviderCredential = Depends(credential),
     ) -> dict[str, Any]:
+        try:
+            generation_intent = delegation_signing_intent_for(request.purpose)
+        except SecretMetadataInvalid as exc:
+            _append_audit(
+                audit_store,
+                provider_id=provider_id,
+                workspace_id=workspace_id,
+                secret_id=secret_id,
+                version_id=None,
+                intent=None,
+                caller_subject=request.caller_subject,
+                correlation_id=request.correlation_id,
+                outcome="malformed",
+                code="invalid-delegation-key-generation",
+            )
+            raise _error(
+                400,
+                "malformed",
+                "invalid-delegation-key-generation",
+            ) from exc
         if (
-            request.purpose != GATEWAY_DELEGATION_PURPOSE
-            or not _IDENTIFIER.fullmatch(request.issuer)
+            not _IDENTIFIER.fullmatch(request.issuer)
             or not _IDENTIFIER.fullmatch(request.caller_subject)
             or not _valid_secret_reference(request.secret_reference)
         ):
@@ -261,7 +279,7 @@ def create_app(
                 workspace_id=workspace_id,
                 secret_id=secret_id,
                 version_id=None,
-                intent=GATEWAY_SIGNING_INTENT,
+                intent=generation_intent,
                 caller_subject=request.caller_subject,
                 correlation_id=request.correlation_id,
                 outcome="malformed",
@@ -274,7 +292,7 @@ def create_app(
                 client,
                 action="secret.generate-delegation-key",
                 workspace_id=workspace_id,
-                intent=GATEWAY_SIGNING_INTENT,
+                intent=generation_intent,
             )
         except HTTPException as exc:
             _append_audit(
@@ -283,7 +301,7 @@ def create_app(
                 workspace_id=workspace_id,
                 secret_id=secret_id,
                 version_id=None,
-                intent=GATEWAY_SIGNING_INTENT,
+                intent=generation_intent,
                 caller_subject=request.caller_subject,
                 correlation_id=request.correlation_id,
                 outcome="denied",
@@ -296,6 +314,7 @@ def create_app(
                 secret_id=secret_id,
                 secret_reference=request.secret_reference,
                 purpose=request.purpose,
+                intent=generation_intent,
                 issuer=request.issuer,
                 caller_subject=request.caller_subject,
                 correlation_id=request.correlation_id,
@@ -324,7 +343,7 @@ def create_app(
                 workspace_id=workspace_id,
                 secret_id=secret_id,
                 version_id=None,
-                intent=GATEWAY_SIGNING_INTENT,
+                intent=generation_intent,
                 caller_subject=request.caller_subject,
                 correlation_id=request.correlation_id,
                 outcome="conflict",
@@ -342,7 +361,7 @@ def create_app(
                 workspace_id=workspace_id,
                 secret_id=secret_id,
                 version_id=None,
-                intent=GATEWAY_SIGNING_INTENT,
+                intent=generation_intent,
                 caller_subject=request.caller_subject,
                 correlation_id=request.correlation_id,
                 outcome="already-exists",
@@ -356,7 +375,7 @@ def create_app(
                 workspace_id=workspace_id,
                 secret_id=secret_id,
                 version_id=None,
-                intent=GATEWAY_SIGNING_INTENT,
+                intent=generation_intent,
                 caller_subject=request.caller_subject,
                 correlation_id=request.correlation_id,
                 outcome="revoked",
@@ -370,7 +389,7 @@ def create_app(
                 workspace_id=workspace_id,
                 secret_id=secret_id,
                 version_id=None,
-                intent=GATEWAY_SIGNING_INTENT,
+                intent=generation_intent,
                 caller_subject=request.caller_subject,
                 correlation_id=request.correlation_id,
                 outcome="unavailable",
