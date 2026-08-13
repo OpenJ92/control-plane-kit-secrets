@@ -136,6 +136,7 @@ class _GenerationFixture:
             "secret_id": "gateway-key-b",
             "secret_reference": "secret://workspace-secrets/keys/gateway-b",
             "purpose": "gateway-probe",
+            "intent": "gateway.probe-signing-key",
             "issuer": "cpk-server",
             "caller_subject": "cpk-server",
             "correlation_id": "rotation-key-b",

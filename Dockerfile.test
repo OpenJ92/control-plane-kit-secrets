@@ -14,11 +14,16 @@ COPY pyproject.toml README.md ./
 COPY src ./src
 
 RUN python -m pip install --upgrade pip \
-    && python -m pip install ".[test]"
+    && python -m pip install "."
 
 CMD ["python", "-c", "import control_plane_kit_secrets; print('control-plane-kit-secrets ready')"]
 
 FROM package AS test
+
+RUN apt-get update \
+    && apt-get install --yes --no-install-recommends git \
+    && rm -rf /var/lib/apt/lists/* \
+    && python -m pip install ".[test]"
 
 COPY AGENTS.md GIT-FLOW.md ./
 COPY tests ./tests

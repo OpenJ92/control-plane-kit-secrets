@@ -53,6 +53,7 @@ class PackagePolicyTests(unittest.TestCase):
     def test_source_does_not_import_disallowed_packages(self) -> None:
         forbidden = {
             "cloudflare",
+            "control_plane_kit_core",
             "control_plane_kit_interpreters",
             "control_plane_kit_operations",
             "control_plane_kit_servers",
@@ -94,6 +95,7 @@ for name in (
     "psycopg",
     "sqlalchemy",
     "control_plane_kit_operations",
+    "control_plane_kit_core",
     "control_plane_kit_interpreters",
     "control_plane_kit_servers",
     "control_plane_kit_servers_cpk_server",
@@ -127,6 +129,7 @@ for name in (
                 "bootstrap_files.py",
                 "boundaries.py",
                 "crypto.py",
+                "delegation_signing.py",
                 "models.py",
                 "server.py",
                 "store.py",
