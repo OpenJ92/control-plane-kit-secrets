@@ -122,6 +122,7 @@ for name in (
             source_files,
             [
                 "__init__.py",
+                "_delegation_signing.py",
                 "api.py",
                 "audit.py",
                 "auth.py",
@@ -129,7 +130,6 @@ for name in (
                 "bootstrap_files.py",
                 "boundaries.py",
                 "crypto.py",
-                "_delegation_signing.py",
                 "models.py",
                 "server.py",
                 "store.py",
