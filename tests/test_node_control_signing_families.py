@@ -344,42 +344,51 @@ class NodeControlSigningFamilyTests(unittest.TestCase):
                 self.assertIsNone(caught.exception.__cause__)
                 self.assertIsNone(caught.exception.__context__)
 
-        for column, oversized in (
-            ("public_key_pem", "p" * 8193),
-            ("key_id", "k" * 129),
-        ):
-            with self.subTest(column=column), _fixture() as fixture:
-                original = fixture.arguments(
-                    purpose=FAMILIES[1][0],
-                    intent=FAMILIES[1][1],
-                    suffix=f"oversized-{column}",
-                )
-                fixture.store.generate_delegation_key(
-                    **original,
-                    provider_id="provider-a",
-                    audit_store=fixture.audit,
-                )
-                with closing(sqlite3.connect(fixture.database_path)) as connection:
-                    with connection:
-                        connection.execute(
-                            f"""
-                            UPDATE delegation_key_generations
-                            SET {column} = ?
-                            WHERE workspace_id = ? AND correlation_id = ?
-                            """,
-                            (
-                                oversized,
-                                original["workspace_id"],
-                                original["correlation_id"],
-                            ),
-                        )
+        original_material_matches = store_module._delegation_material_matches
 
-                with self.assertRaises(SecretTampered):
+        def fail_if_material_matching_is_reached(**_values: object) -> bool:
+            raise AssertionError("delegation material matching must not be reached")
+
+        store_module._delegation_material_matches = fail_if_material_matching_is_reached
+        try:
+            for column, oversized in (
+                ("public_key_pem", "p" * 8193),
+                ("key_id", "k" * 129),
+            ):
+                with self.subTest(column=column), _fixture() as fixture:
+                    original = fixture.arguments(
+                        purpose=FAMILIES[1][0],
+                        intent=FAMILIES[1][1],
+                        suffix=f"oversized-{column}",
+                    )
                     fixture.store.generate_delegation_key(
                         **original,
                         provider_id="provider-a",
                         audit_store=fixture.audit,
                     )
+                    with closing(sqlite3.connect(fixture.database_path)) as connection:
+                        with connection:
+                            connection.execute(
+                                f"""
+                                UPDATE delegation_key_generations
+                                SET {column} = ?
+                                WHERE workspace_id = ? AND correlation_id = ?
+                                """,
+                                (
+                                    oversized,
+                                    original["workspace_id"],
+                                    original["correlation_id"],
+                                ),
+                            )
+
+                    with self.assertRaises(SecretTampered):
+                        fixture.store.generate_delegation_key(
+                            **original,
+                            provider_id="provider-a",
+                            audit_store=fixture.audit,
+                        )
+        finally:
+            store_module._delegation_material_matches = original_material_matches
 
     def test_generation_response_audit_and_plaintext_rows_exclude_private_material(
         self,
