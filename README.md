@@ -17,22 +17,25 @@ fail-closed resolve behavior when audit persistence is unavailable.
 
 ## Delegation Key Generation
 
-The provider owns the closed Ed25519 generation operation used for gateway
-probe delegation. A caller supplies only bounded identity and correlation
-metadata:
+The provider owns a closed set of Ed25519 generation operations for gateway
+probe, gateway node-control transit, and workload node-control delegation. A
+caller supplies only bounded identity and correlation metadata:
 
 ```text
-workspace + SecretReference + gateway-probe purpose + issuer + correlation
+workspace + SecretReference + admitted purpose + issuer + correlation
   -> provider generates private key
     -> encrypted custody + generation identity + audit commit atomically
       -> public key, reference, version, and correlation evidence returned
 ```
 
-Private key bytes never cross the generation response. Authorized signers may
-resolve the admitted `gateway.probe-signing-key` reference later through the
-normal use-specific provider route. Exact retries return the original public
-identity. Reusing a correlation for different semantics fails closed, and a
-revoked generated reference cannot be replayed into service.
+Each admitted purpose has exactly one provider-local resolution intent. Private
+key bytes never cross the generation response. Authorized signing effects may
+resolve the paired intent later through the normal use-specific provider route.
+Exact retries return the original public identity. Reusing a correlation for
+different semantics, substituting an intent, or drifting authenticated family
+metadata fails closed, and a revoked generated reference cannot be replayed
+into service. Compact profile construction and signing remain outside this
+provider.
 
 ## Exact Version Revocation
 

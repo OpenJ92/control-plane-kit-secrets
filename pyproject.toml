@@ -19,6 +19,7 @@ dependencies = [
 
 [project.optional-dependencies]
 test = [
+  "control-plane-kit-core @ git+https://github.com/OpenJ92/control-plane-kit.git@a62af8431afb878fa0beed3b752cbdf7a640fb48#subdirectory=control-plane-kit-core",
   "httpx>=0.28",
   "uvicorn>=0.35",
 ]
