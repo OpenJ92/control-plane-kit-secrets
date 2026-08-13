@@ -40,6 +40,8 @@ MAX_LABELS = 16
 MAX_LABEL_KEY_CHARS = 64
 MAX_LABEL_VALUE_CHARS = 256
 DELEGATION_KEY_ALGORITHM = "ed25519"
+MAX_DELEGATION_PUBLIC_KEY_PEM_CHARS = 8192
+MAX_DELEGATION_KEY_ID_CHARS = 128
 
 
 class EncryptedSecretStore:
@@ -641,9 +643,13 @@ class EncryptedSecretStore:
             raise SecretRevoked()
         purpose = str(row["purpose"])
         issuer = str(row["issuer"])
-        key_id = str(row["key_id"])
+        key_id = row["key_id"]
         algorithm = str(row["algorithm"])
-        public_key_pem = str(row["public_key_pem"])
+        public_key_pem = row["public_key_pem"]
+        _require_bounded_delegation_public_identity(
+            public_key_pem=public_key_pem,
+            key_id=key_id,
+        )
         if (
             dict(metadata.labels)
             != {
@@ -935,6 +941,20 @@ def _delegation_key_id(public_key_pem: str) -> str:
     from hashlib import sha256
 
     return f"gateway-{sha256(public_key_pem.encode('ascii')).hexdigest()}"
+
+
+def _require_bounded_delegation_public_identity(
+    *,
+    public_key_pem: object,
+    key_id: object,
+) -> None:
+    if (
+        type(public_key_pem) is not str
+        or len(public_key_pem) > MAX_DELEGATION_PUBLIC_KEY_PEM_CHARS
+        or type(key_id) is not str
+        or len(key_id) > MAX_DELEGATION_KEY_ID_CHARS
+    ):
+        raise SecretTampered()
 
 
 def _delegation_material_matches(
