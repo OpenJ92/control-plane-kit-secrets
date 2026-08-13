@@ -31,6 +31,7 @@ from control_plane_kit_secrets.crypto import (
     load_master_key_file,
 )
 from control_plane_kit_secrets.models import SecretMetadataInvalid, SecretTampered
+from control_plane_kit_secrets import store as store_module
 from control_plane_kit_secrets.store import EncryptedSecretStore
 
 
@@ -319,6 +320,66 @@ class NodeControlSigningFamilyTests(unittest.TestCase):
                     )
                 self.assertIsNone(caught.exception.__cause__)
                 self.assertIsNone(caught.exception.__context__)
+
+    def test_replay_bounds_persisted_public_identity_before_crypto(self) -> None:
+        self.assertEqual(store_module.MAX_DELEGATION_PUBLIC_KEY_PEM_CHARS, 8192)
+        self.assertEqual(store_module.MAX_DELEGATION_KEY_ID_CHARS, 128)
+        store_module._require_bounded_delegation_public_identity(
+            public_key_pem="p" * 8192,
+            key_id="k" * 128,
+        )
+        for public_key_pem, key_id in (
+            ("p" * 8193, "key-id"),
+            ("public", "k" * 129),
+        ):
+            with self.subTest(
+                public_key_pem_chars=len(public_key_pem),
+                key_id_chars=len(key_id),
+            ):
+                with self.assertRaises(SecretTampered) as caught:
+                    store_module._require_bounded_delegation_public_identity(
+                        public_key_pem=public_key_pem,
+                        key_id=key_id,
+                    )
+                self.assertIsNone(caught.exception.__cause__)
+                self.assertIsNone(caught.exception.__context__)
+
+        for column, oversized in (
+            ("public_key_pem", "p" * 8193),
+            ("key_id", "k" * 129),
+        ):
+            with self.subTest(column=column), _fixture() as fixture:
+                original = fixture.arguments(
+                    purpose=FAMILIES[1][0],
+                    intent=FAMILIES[1][1],
+                    suffix=f"oversized-{column}",
+                )
+                fixture.store.generate_delegation_key(
+                    **original,
+                    provider_id="provider-a",
+                    audit_store=fixture.audit,
+                )
+                with closing(sqlite3.connect(fixture.database_path)) as connection:
+                    with connection:
+                        connection.execute(
+                            f"""
+                            UPDATE delegation_key_generations
+                            SET {column} = ?
+                            WHERE workspace_id = ? AND correlation_id = ?
+                            """,
+                            (
+                                oversized,
+                                original["workspace_id"],
+                                original["correlation_id"],
+                            ),
+                        )
+
+                with self.assertRaises(SecretTampered):
+                    fixture.store.generate_delegation_key(
+                        **original,
+                        provider_id="provider-a",
+                        audit_store=fixture.audit,
+                    )
 
     def test_generation_response_audit_and_plaintext_rows_exclude_private_material(
         self,
