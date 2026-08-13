@@ -263,40 +263,62 @@ class NodeControlSigningFamilyTests(unittest.TestCase):
     def test_replay_rejects_generation_row_and_authenticated_family_drift(
         self,
     ) -> None:
-        with _fixture() as fixture:
-            original = fixture.arguments(
-                purpose=FAMILIES[1][0],
-                intent=FAMILIES[1][1],
-                suffix="drift",
-            )
-            fixture.store.generate_delegation_key(
-                **original,
-                provider_id="provider-a",
-                audit_store=fixture.audit,
-            )
-            with closing(sqlite3.connect(fixture.database_path)) as connection:
-                with connection:
-                    connection.execute(
-                        """
-                        UPDATE delegation_key_generations
-                        SET purpose = ?
-                        WHERE workspace_id = ? AND correlation_id = ?
-                        """,
-                        (
-                            FAMILIES[2][0],
-                            original["workspace_id"],
-                            original["correlation_id"],
-                        ),
-                    )
-
-            with self.assertRaises(SecretTampered) as caught:
+        for corrupted_labels in (False, True):
+            with self.subTest(corrupted_labels=corrupted_labels), _fixture() as fixture:
+                original = fixture.arguments(
+                    purpose=FAMILIES[1][0],
+                    intent=FAMILIES[1][1],
+                    suffix="drift",
+                )
                 fixture.store.generate_delegation_key(
-                    **{**original, "purpose": FAMILIES[2][0], "intent": FAMILIES[2][1]},
+                    **original,
                     provider_id="provider-a",
                     audit_store=fixture.audit,
                 )
-            self.assertIsNone(caught.exception.__cause__)
-            self.assertIsNone(caught.exception.__context__)
+                with closing(sqlite3.connect(fixture.database_path)) as connection:
+                    with connection:
+                        if corrupted_labels:
+                            connection.execute(
+                                """
+                                UPDATE secret_versions
+                                SET labels_json = ?
+                                WHERE workspace_id = ? AND secret_id = ?
+                                """,
+                                (
+                                    "{",
+                                    original["workspace_id"],
+                                    original["secret_id"],
+                                ),
+                            )
+                        else:
+                            connection.execute(
+                                """
+                                UPDATE delegation_key_generations
+                                SET purpose = ?
+                                WHERE workspace_id = ? AND correlation_id = ?
+                                """,
+                                (
+                                    FAMILIES[2][0],
+                                    original["workspace_id"],
+                                    original["correlation_id"],
+                                ),
+                            )
+
+                replay = original
+                if not corrupted_labels:
+                    replay = {
+                        **original,
+                        "purpose": FAMILIES[2][0],
+                        "intent": FAMILIES[2][1],
+                    }
+                with self.assertRaises(SecretTampered) as caught:
+                    fixture.store.generate_delegation_key(
+                        **replay,
+                        provider_id="provider-a",
+                        audit_store=fixture.audit,
+                    )
+                self.assertIsNone(caught.exception.__cause__)
+                self.assertIsNone(caught.exception.__context__)
 
     def test_generation_response_audit_and_plaintext_rows_exclude_private_material(
         self,
