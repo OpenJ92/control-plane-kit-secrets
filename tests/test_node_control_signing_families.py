@@ -93,7 +93,7 @@ class NodeControlSigningFamilyTests(unittest.TestCase):
         self.assertEqual(imported.returncode, 0, imported.stderr)
 
         family_module = importlib.import_module(
-            "control_plane_kit_secrets.delegation_signing"
+            "control_plane_kit_secrets._delegation_signing"
         )
         self.assertEqual(
             {

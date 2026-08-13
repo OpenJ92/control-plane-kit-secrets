@@ -129,7 +129,7 @@ for name in (
                 "bootstrap_files.py",
                 "boundaries.py",
                 "crypto.py",
-                "delegation_signing.py",
+                "_delegation_signing.py",
                 "models.py",
                 "server.py",
                 "store.py",
