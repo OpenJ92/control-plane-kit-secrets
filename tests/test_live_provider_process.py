@@ -18,6 +18,61 @@ from control_plane_kit_secrets.crypto import encode_master_key_for_file
 
 
 class LiveProviderProcessTests(unittest.TestCase):
+    def test_invalid_bootstrap_exits_before_creating_custody_or_audit(self) -> None:
+        cases = ("missing-key", "malformed-key", "missing-credentials", "malformed-json",
+                 "unknown-grant-field", "duplicate-token", "untyped-subject")
+        for case in cases:
+            with self.subTest(case=case), tempfile.TemporaryDirectory() as directory:
+                base = Path(directory)
+                db_path = base / "uncreated-custody" / "secrets.sqlite3"
+                key_path = base / "private-key-path-marker"
+                key_path.write_text(encode_master_key_for_file(os.urandom(32)), encoding="utf-8")
+                key_path.chmod(0o600)
+                credentials_path = base / "private-credentials-path-marker"
+                item = {"subject": "client", "token": "private-token-marker"}
+                document = [item]
+                if case == "unknown-grant-field":
+                    item["grants"] = [{"action": "secret.resolve", "workspace_id": "*", "intent": []}]
+                elif case == "duplicate-token":
+                    document.append({**item, "subject": "other"})
+                elif case == "untyped-subject":
+                    item["subject"] = 42
+                credentials_path.write_text(
+                    "private-document-marker" if case == "malformed-json" else json.dumps(document),
+                    encoding="utf-8",
+                )
+                credentials_path.chmod(0o600)
+                environment = {key: value for key, value in os.environ.items()
+                               if not key.startswith("CPK_SECRETS_")}
+                environment.update({"CPK_SECRETS_DATABASE_PATH": str(db_path),
+                                    "CPK_SECRETS_MASTER_KEY_FILE": str(key_path),
+                                    "CPK_SECRETS_CREDENTIALS_FILE": str(credentials_path),
+                                    "CPK_SECRETS_PROVIDER_ID": "private-provider-marker"})
+                if case == "missing-key":
+                    key_path.unlink()
+                elif case == "malformed-key":
+                    key_path.write_text("private-key-material-marker\u00e9", encoding="utf-8")
+                elif case == "missing-credentials":
+                    credentials_path.unlink()
+                process = _start_provider(port=_free_port(), environment=environment)
+                try:
+                    try:
+                        stdout, stderr = process.communicate(timeout=10)
+                    except subprocess.TimeoutExpired:
+                        self.fail("invalid bootstrap did not exit within the startup bound")
+                    self.assertNotEqual(process.returncode, 0)
+                    output = stdout + stderr
+                    self.assertIn("secret provider configuration is invalid", output)
+                    self.assertLess(len(output), 16384)
+                    for forbidden in (str(base), "private-token-marker", "private-document-marker",
+                                      "private-key-material-marker", "private-provider-marker"):
+                        self.assertFalse(forbidden in output, "bootstrap detail leaked")
+                    self.assertFalse(db_path.exists(), "invalid bootstrap created a database")
+                    self.assertFalse(db_path.parent.exists(), "invalid bootstrap created custody directories")
+                finally:
+                    if process.poll() is None:
+                        _stop_provider(process)
+
     def test_restart_rotate_revoke_and_leak_audit_through_real_process(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             base = Path(directory)
