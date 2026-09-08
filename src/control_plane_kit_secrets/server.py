@@ -4,10 +4,9 @@ import os
 from typing import Mapping
 
 from .api import create_app
-from .audit import SqliteAuditStore
 from .bootstrap import ProviderConfigurationError, load_provider_credentials
 from .crypto import SecretCryptoError, load_master_key_from_environment
-from .store import EncryptedSecretStore
+from .custody import admit_provider_custody
 
 
 def app_from_environment(environment: Mapping[str, str] | None = None) -> object:
@@ -22,10 +21,9 @@ def app_from_environment(environment: Mapping[str, str] | None = None) -> object
         credentials = load_provider_credentials(source)
     except (SecretCryptoError, ProviderConfigurationError):
         raise ProviderConfigurationError() from None
-    store = EncryptedSecretStore(database_path, master_key=master_key)
-    store.initialize()
-    audit_store = SqliteAuditStore(database_path)
-    audit_store.initialize()
+    store, audit_store = admit_provider_custody(
+        database_path, master_key=master_key, provider_id=provider_id
+    )
     return create_app(
         store=store,
         audit_store=audit_store,
