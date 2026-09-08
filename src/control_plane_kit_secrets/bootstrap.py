@@ -40,18 +40,23 @@ def _credentials_from_file(path_value: str) -> tuple[ProviderCredential, ...]:
             maximum_bytes=_MAXIMUM_CREDENTIAL_FILE_BYTES,
         )
         return _credentials_from_json(payload.decode("utf-8"))
-    except (ProtectedBootstrapFileError, UnicodeDecodeError) as exc:
-        raise ProviderConfigurationError() from exc
+    except (ProtectedBootstrapFileError, UnicodeDecodeError):
+        raise ProviderConfigurationError() from None
 
 
 def _credentials_from_json(payload: str) -> tuple[ProviderCredential, ...]:
     try:
+        if len(payload.encode("utf-8")) > _MAXIMUM_CREDENTIAL_FILE_BYTES:
+            raise ValueError
         decoded = json.loads(payload, object_pairs_hook=_unique_object)
         if not isinstance(decoded, list):
             raise ValueError
-        return tuple(_credential_from_mapping(item) for item in decoded)
-    except Exception as exc:
-        raise ProviderConfigurationError() from exc
+        credentials = tuple(_credential_from_mapping(item) for item in decoded)
+        if len({credential.token for credential in credentials}) != len(credentials):
+            raise ValueError
+        return credentials
+    except Exception:
+        raise ProviderConfigurationError() from None
 
 
 def _unique_object(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
@@ -66,12 +71,17 @@ def _unique_object(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
 def _credential_from_mapping(item: Any) -> ProviderCredential:
     if not isinstance(item, dict):
         raise ValueError
+    if item.keys() - {"subject", "token", "grants"}:
+        raise ValueError
     grants = item.get("grants", [])
     if not isinstance(grants, list):
         raise ValueError
+    token = _text(item["token"])
+    if not token.isascii() or token != token.strip():
+        raise ValueError
     return ProviderCredential(
-        subject=str(item["subject"]),
-        token=str(item["token"]),
+        subject=_text(item["subject"]),
+        token=token,
         grants=tuple(_grant_from_mapping(grant) for grant in grants),
     )
 
@@ -79,11 +89,21 @@ def _credential_from_mapping(item: Any) -> ProviderCredential:
 def _grant_from_mapping(item: Any) -> ProviderGrant:
     if not isinstance(item, dict):
         raise ValueError
+    if item.keys() - {"action", "workspace_id", "intents"}:
+        raise ValueError
     intents = item.get("intents", ["*"])
     if not isinstance(intents, list):
         raise ValueError
     return ProviderGrant(
-        action=str(item["action"]),
-        workspace_id=str(item["workspace_id"]),
-        intents=tuple(str(intent) for intent in intents),
+        action=_text(item["action"]),
+        workspace_id=_text(item["workspace_id"]),
+        intents=tuple(_text(intent) for intent in intents),
     )
+
+
+def _text(value: Any) -> str:
+    if not isinstance(value, str) or not value.strip():
+        raise ValueError
+    if any(ord(character) < 0x20 or ord(character) == 0x7F for character in value):
+        raise ValueError
+    return value

@@ -79,6 +79,34 @@ Production provider credentials are loaded from the absolute owner-only path in
 fixtures; configure exactly one source. Provider credentials are bootstrap
 roots and must not resolve recursively through this provider.
 
+Both sources accept a UTF-8 JSON array bounded to 64 KiB of encoded bytes. Each
+credential requires `subject` and `token`; optional `grants` defaults to `[]`.
+Each grant requires `action` and `workspace_id`; optional `intents` defaults to
+`["*"]`. An empty credential array authenticates nobody. Empty grants authorize
+nothing; empty intents deny intent-qualified requests while preserving actions
+that do not carry an intent. Explicit workspace and intent wildcards remain
+supported. Unknown nonmatching action/intent text grants no current capability.
+
+All these fields and intent entries must be strings, not whitespace-only, and
+contain no C0 (`U+0000..U+001F`) or DEL (`U+007F`) controls. Tokens must also be
+ASCII with no leading/trailing whitespace; internal spaces are accepted. Accepted
+text is preserved exactly, without coercion or normalization. There is no
+independent token or collection size limit beyond the document ceiling. Duplicate
+JSON keys, unknown credential/grant fields, and duplicate bearer tokens reject.
+Distinct tokens may share a subject; repeated grants/intents remain lawful.
+These are document-loader rules; programmatic auth constructors are unchanged.
+
+Unset the unused credential source. Existing empty-value behavior is preserved:
+a valid file with empty development JSON selects the file; an empty file setting
+with nonempty development JSON rejects. Both nonempty or both absent/empty reject.
+
+Startup validates the existing master-key input and credentials before creating
+or initializing custody/audit stores. Invalid pure configuration exits with the
+fixed error `secret provider configuration is invalid`, suppressing sensitive
+chained exception details. This validates bootstrap input only: it does not prove
+that a decoded key matches an existing database, bind provider identity to retained
+state, or add concurrency, repair, reset, rekey, migration, or recovery behavior.
+
 The provider stores only key fingerprint and key-version evidence in the
 database. It does not store the raw master key. Future key rotation should add
 an explicit rewrap or new-version flow; it must not silently change the key used
