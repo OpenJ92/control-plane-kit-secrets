@@ -10,7 +10,7 @@ from fastapi.testclient import TestClient
 from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PublicKey
 
-from control_plane_kit_secrets.api import create_app
+from control_plane_kit_secrets.api import ALLOWED_SECRET_USE_INTENTS, create_app
 from control_plane_kit_secrets.audit import AuditUnavailable, SqliteAuditStore
 from control_plane_kit_secrets.auth import ProviderCredential, ProviderGrant
 from control_plane_kit_secrets.crypto import encode_master_key_for_file, load_master_key_file
@@ -19,6 +19,91 @@ from control_plane_kit_secrets.store import EncryptedSecretStore
 
 
 class ProviderApiTests(unittest.TestCase):
+    def test_provider_purposes_remain_closed_with_two_bootstrap_consumers(self) -> None:
+        self.assertEqual(ALLOWED_SECRET_USE_INTENTS, frozenset({
+            "application.control-token", "cloudflare.api-token", "cloudflare.tunnel-token",
+            "docker.local-socket-access-marker", "docker.remote-tls.ca-certificate",
+            "docker.remote-tls.client-certificate", "docker.remote-tls.client-key",
+            "gateway.probe-signing-key", "gateway.node-control-transit-signing-key",
+            "oci.pull-credential", "postgres.password", "workload.node-control-signing-key",
+            "secrets.custody-root-key", "secrets.provider-credentials-document",
+        }))
+
+    def test_bootstrap_purpose_resolution_preserves_exact_and_wildcard_authority(self) -> None:
+        purposes = ("secrets.custody-root-key", "secrets.provider-credentials-document")
+        for intent, other in (purposes, tuple(reversed(purposes))):
+            with self.subTest(intent=intent), _client(credentials=(
+                ProviderCredential("bootstrap-writer", "bootstrap-writer-token", (
+                    ProviderGrant("secret.write", "workspace-1", (intent,)),)),
+                ProviderCredential("bootstrap-reader", "bootstrap-reader-token", (
+                    ProviderGrant("secret.resolve", "workspace-1", (intent,)),)),
+                ProviderCredential("other-purpose-reader", "other-purpose-token", (
+                    ProviderGrant("secret.resolve", "workspace-1", (other,)),)),
+                ProviderCredential("wildcard-reader", "wildcard-reader-token", (
+                    ProviderGrant("secret.resolve", "*"),)),
+            )) as fixture:
+                material = b"opaque-bootstrap-fixture-material"
+                path = "/v1/workspaces/workspace-1/secrets/bootstrap-material"
+                written = fixture.client.post(path,
+                    headers=fixture.headers("bootstrap-writer-token"),
+                    json={"value_base64": _b64(material), "intent": intent,
+                          "caller_subject": "worker-a", "correlation_id": "bootstrap-write"})
+                self.assertEqual(written.status_code, 200)
+                self.assertEqual(written.json()["metadata"]["labels"]["intent"], intent)
+                request = {"intent": intent, "caller_subject": "worker-a",
+                           "correlation_id": "bootstrap-resolve"}
+                resolved = fixture.client.post(path + "/resolve",
+                    headers=fixture.headers("bootstrap-reader-token"), json=request)
+                self.assertEqual(resolved.status_code, 200)
+                self.assertTrue(base64.b64decode(resolved.json()["value_base64"]) == material,
+                                "resolved opaque material mismatch")
+                replayed = fixture.client.post(path + "/resolve",
+                    headers=fixture.headers("bootstrap-reader-token"), json=request)
+                self.assertEqual(replayed.status_code, 200)
+                self.assertTrue(replayed.json() == resolved.json(), "same-use replay changed")
+
+                denied_cases = (
+                    ("unregistered-token", intent, "workspace-1", 401, "unauthenticated"),
+                    ("bootstrap-writer-token", intent, "workspace-1", 403, "insufficient-scope"),
+                    ("bootstrap-reader-token", intent, "workspace-2", 403, "insufficient-scope"),
+                    ("other-purpose-token", intent, "workspace-1", 403, "insufficient-scope"),
+                    ("bootstrap-reader-token", other, "workspace-1", 403, "insufficient-scope"),
+                    ("wildcard-reader-token", other, "workspace-1", 403, "secret-intent-mismatch"),
+                    ("wildcard-reader-token", "application.control-token", "workspace-1", 403, "secret-intent-mismatch"),
+                    ("wildcard-reader-token", "secrets.unknown-bootstrap", "workspace-1", 400, "unsupported-intent"),
+                )
+                for index, (token, purpose, workspace, status, code) in enumerate(denied_cases):
+                    with self.subTest(denial=index):
+                        denied = fixture.client.post(
+                            path.replace("workspace-1", workspace) + "/resolve",
+                            headers=fixture.headers(token),
+                            json={**request, "intent": purpose,
+                                  "correlation_id": f"bootstrap-denied-{index}"})
+                        self.assertEqual(denied.status_code, status)
+                        self.assertEqual(denied.json()["detail"]["code"], code)
+                        self.assertNotIn("value_base64", denied.json())
+                        self.assertTrue(material.decode() not in denied.text)
+                        self.assertTrue(_b64(material) not in denied.text)
+                        self.assertTrue(token not in denied.text)
+
+                wildcard = fixture.client.post(path + "/resolve",
+                    headers=fixture.headers("wildcard-reader-token"),
+                    json={**request, "correlation_id": "bootstrap-wildcard"})
+                self.assertEqual(wildcard.status_code, 200)
+                self.assertTrue(base64.b64decode(wildcard.json()["value_base64"]) == material,
+                                "wildcard resolution changed material")
+                rows = fixture.audit_rows()
+                self.assertEqual([row["outcome"] for row in rows],
+                                 ["stored", "resolved", "resolved", *(["denied"] * 7),
+                                  "malformed", "resolved"])
+                self.assertEqual([row["code"] for row in rows[3:-1]],
+                                 [case[4] for case in denied_cases])
+                self.assertEqual({row["caller_subject"] for row in rows
+                                  if row["outcome"] == "resolved"}, {"worker-a"})
+                for forbidden in (material.decode(), _b64(material), "bootstrap-writer-token",
+                                  "bootstrap-reader-token", "other-purpose-token", "wildcard-reader-token"):
+                    self.assertTrue(forbidden not in repr(rows), "audit leaked private fixture material")
+
     def test_exact_version_revocation_is_authorized_audited_and_idempotent(
         self,
     ) -> None:
@@ -738,6 +823,7 @@ class _ApiFixture:
         self,
         *,
         audit_store_factory: object | None = None,
+        credentials: tuple[ProviderCredential, ...] | None = None,
     ) -> None:
         self._directory = tempfile.TemporaryDirectory()
         base = Path(self._directory.name)
@@ -761,7 +847,7 @@ class _ApiFixture:
             create_app(
                 store=store,
                 audit_store=self.audit_store,
-                credentials=(
+                credentials=credentials if credentials is not None else (
                     ProviderCredential(
                         subject="writer",
                         token="writer-token",
@@ -916,8 +1002,11 @@ class _ApiFixture:
         )
 
 
-def _client(*, audit_store_factory: object | None = None) -> _ApiFixture:
-    return _ApiFixture(audit_store_factory=audit_store_factory)
+def _client(
+    *, audit_store_factory: object | None = None,
+    credentials: tuple[ProviderCredential, ...] | None = None,
+) -> _ApiFixture:
+    return _ApiFixture(audit_store_factory=audit_store_factory, credentials=credentials)
 
 
 class _FailingAuditStore:
