@@ -100,15 +100,38 @@ Unset the unused credential source. Existing empty-value behavior is preserved:
 a valid file with empty development JSON selects the file; an empty file setting
 with nonempty development JSON rejects. Both nonempty or both absent/empty reject.
 
-Startup validates the existing master-key input and credentials before creating
-or initializing custody/audit stores. Invalid pure configuration exits with the
-fixed error `secret provider configuration is invalid`, suppressing sensitive
-chained exception details. This validates bootstrap input only: it does not prove
-that a decoded key matches an existing database, bind provider identity to retained
-state, or add concurrency, repair, reset, rekey, migration, or recovery behavior.
+Startup validates the existing master-key input and credentials before opening
+custody. Invalid pure configuration exits with `secret provider configuration is
+invalid`, suppressing sensitive chained exception details.
 
-The provider stores only key fingerprint and key-version evidence in the
-database. It does not store the raw master key. Future key rotation should add
+The provider then admits custody under one explicit SQLite transaction. Fresh or
+positively object-free storage receives the complete custody/audit schema and one
+authenticated root-key/provider/schema binding together. A retained bound store
+must match the exact required schema and authenticate that binding before the app
+can become ready. Compatible restart performs no logical schema or row writes.
+The effective provider ID is compared exactly: omission defaults to
+`local-dev-provider`; explicitly supplied strings, including empty, stay distinct.
+Credential documents remain independently configurable bootstrap inputs.
+
+Existing unbound databases, including empty legacy schemas, are refused unchanged;
+there is no automatic adoption or migration. Wrong key/provider, binding tamper or
+schema mismatch exits with `secret provider custody is incompatible`. Unresolved
+SQLite locking, recovery or transaction failure exits with `secret provider custody
+is unavailable`. Both errors suppress underlying sensitive details; neither causes
+an internal retry, repair, reset or rekey. A later explicit start inspects current
+committed truth before deciding. Concurrent starts serialize at admission and
+cannot establish conflicting committed identities.
+
+This supports ordinary local regular SQLite files and rejects observed symlink or
+nonregular targets. Logical no-write does not mean byte-identical journal files or
+protection against hostile filesystem replacement. Startup checks the binding and
+schema, not every retained ciphertext; resolution still authenticates individual
+secret rows. Direct store APIs retain their existing behavior and do not claim
+provider startup admission. No new status endpoint exposes binding/key evidence.
+
+Secret-version rows record key fingerprint and key-version evidence; the custody
+binding separately authenticates provider/schema identity. Neither stores the raw
+master key. Future key rotation should add
 an explicit rewrap or new-version flow; it must not silently change the key used
 to decrypt existing ciphertext.
 
