@@ -52,6 +52,8 @@ ALLOWED_SECRET_USE_INTENTS = frozenset(
         "gateway.node-control-transit-signing-key",
         "oci.pull-credential",
         "postgres.password",
+        "secrets.custody-root-key",
+        "secrets.provider-credentials-document",
         "workload.node-control-signing-key",
     }
 )
