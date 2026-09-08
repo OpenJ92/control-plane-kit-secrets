@@ -6,7 +6,7 @@ from typing import Mapping
 from .api import create_app
 from .audit import SqliteAuditStore
 from .bootstrap import ProviderConfigurationError, load_provider_credentials
-from .crypto import load_master_key_from_environment
+from .crypto import SecretCryptoError, load_master_key_from_environment
 from .store import EncryptedSecretStore
 
 
@@ -17,7 +17,11 @@ def app_from_environment(environment: Mapping[str, str] | None = None) -> object
     if not database_path:
         raise ProviderConfigurationError()
 
-    master_key = load_master_key_from_environment(source)
+    try:
+        master_key = load_master_key_from_environment(source)
+        credentials = load_provider_credentials(source)
+    except (SecretCryptoError, ProviderConfigurationError):
+        raise ProviderConfigurationError() from None
     store = EncryptedSecretStore(database_path, master_key=master_key)
     store.initialize()
     audit_store = SqliteAuditStore(database_path)
@@ -25,7 +29,7 @@ def app_from_environment(environment: Mapping[str, str] | None = None) -> object
     return create_app(
         store=store,
         audit_store=audit_store,
-        credentials=load_provider_credentials(source),
+        credentials=credentials,
         provider_id=provider_id,
     )
 
