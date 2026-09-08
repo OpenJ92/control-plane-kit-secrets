@@ -1,9 +1,12 @@
 from __future__ import annotations
 
 import os
+import importlib
+import importlib.util
 import sqlite3
 import tempfile
 import unittest
+from unittest.mock import patch
 from concurrent.futures import ThreadPoolExecutor
 from threading import Barrier
 from contextlib import closing
@@ -31,6 +34,127 @@ from control_plane_kit_secrets.store import EncryptedSecretStore
 
 
 class EncryptedSecretStoreTests(unittest.TestCase):
+    def _custody_service(self):
+        name = "control_plane_kit_secrets.custody"
+        self.assertIsNotNone(importlib.util.find_spec(name), "provider custody admission is missing")
+        module = importlib.import_module(name)
+        self.assertTrue(callable(getattr(module, "admit_provider_custody", None)))
+        return module
+
+    def test_provider_admission_preserves_empty_and_populated_custody(self) -> None:
+        custody = self._custody_service()
+        with tempfile.TemporaryDirectory() as directory:
+            paths = _paths(directory)
+            key = _write_key(paths["key"])
+            # A real object-free SQLite database is also a lawful first start.
+            with closing(sqlite3.connect(paths["db"])):
+                pass
+            store, audit = custody.admit_provider_custody(paths["db"], master_key=key, provider_id="")
+            self.assertIsInstance(store, EncryptedSecretStore)
+            self.assertIsInstance(audit, SqliteAuditStore)
+            with closing(sqlite3.connect(paths["db"])) as connection:
+                tables = {row[0] for row in connection.execute("SELECT name FROM sqlite_schema WHERE type='table'")}
+                count = connection.execute("SELECT COUNT(*) FROM provider_custody_binding").fetchone()[0]
+            self.assertEqual(tables, {"secret_versions", "secret_resolution_selections", "delegation_key_generations",
+                                      "secret_version_revocations", "audit_records", "provider_custody_binding"})
+            self.assertEqual(count, 1)
+            before = _logical_snapshot(paths["db"])
+            custody.admit_provider_custody(paths["db"], master_key=key, provider_id="")
+            self.assertTrue(before == _logical_snapshot(paths["db"]), "empty restart mutated custody")
+            metadata = store.create_secret(workspace_id="workspace-1", secret_id="retained", value=b"retained-fixture")
+            before = _logical_snapshot(paths["db"])
+            restarted, _ = custody.admit_provider_custody(paths["db"], master_key=key, provider_id="")
+            self.assertTrue(before == _logical_snapshot(paths["db"]), "populated restart mutated custody")
+            resolved = restarted.resolve_secret(workspace_id="workspace-1", secret_id="retained")
+            self.assertTrue(resolved.value == b"retained-fixture")
+            self.assertEqual(resolved.metadata.version_id, metadata.version_id)
+
+    def test_provider_admission_rejects_incompatible_unbound_and_tampered_state(self) -> None:
+        custody = self._custody_service()
+        with tempfile.TemporaryDirectory() as directory:
+            paths = _paths(directory)
+            key = _write_key(paths["key"])
+            wrong_key = _write_key(Path(directory, "other-key"))
+            custody.admit_provider_custody(paths["db"], master_key=key, provider_id="provider-a")
+            for candidate_key, provider_id in ((wrong_key, "provider-a"), (key, "provider-b")):
+                before = _logical_snapshot(paths["db"])
+                with self.assertRaises(custody.ProviderCustodyRejected) as context:
+                    custody.admit_provider_custody(paths["db"], master_key=candidate_key, provider_id=provider_id)
+                self.assertEqual(str(context.exception), "secret provider custody is incompatible")
+                self.assertTrue(before == _logical_snapshot(paths["db"]), "rejection mutated custody")
+            with closing(sqlite3.connect(paths["db"])) as connection, connection:
+                connection.execute("UPDATE provider_custody_binding SET ciphertext = randomblob(length(ciphertext))")
+            before = _logical_snapshot(paths["db"])
+            with self.assertRaises(custody.ProviderCustodyRejected):
+                custody.admit_provider_custody(paths["db"], master_key=key, provider_id="provider-a")
+            self.assertTrue(before == _logical_snapshot(paths["db"]), "tamper rejection mutated custody")
+
+            legacy = Path(directory, "legacy.sqlite3")
+            EncryptedSecretStore(legacy, master_key=key).initialize()
+            SqliteAuditStore(legacy).initialize()
+            before = _logical_snapshot(legacy)
+            with self.assertRaises(custody.ProviderCustodyRejected):
+                custody.admit_provider_custody(legacy, master_key=key, provider_id="provider-a")
+            self.assertTrue(before == _logical_snapshot(legacy), "unbound schema was adopted")
+
+            altered = Path(directory, "altered.sqlite3")
+            custody.admit_provider_custody(altered, master_key=key, provider_id="provider-a")
+            with closing(sqlite3.connect(altered)) as connection, connection:
+                connection.execute("ALTER TABLE audit_records ADD COLUMN unexpected TEXT")
+            before = _logical_snapshot(altered)
+            with self.assertRaises(custody.ProviderCustodyRejected):
+                custody.admit_provider_custody(altered, master_key=key, provider_id="provider-a")
+            self.assertTrue(before == _logical_snapshot(altered), "schema rejection mutated custody")
+
+    def test_concurrent_provider_admission_has_one_committed_identity(self) -> None:
+        custody = self._custody_service()
+        for same_identity in (True, False):
+            with self.subTest(same_identity=same_identity), tempfile.TemporaryDirectory() as directory:
+                paths = _paths(directory)
+                key = _write_key(paths["key"])
+                barrier = Barrier(2)
+                identities = ("provider-a", "provider-a" if same_identity else "provider-b")
+
+                def admit(identity: str) -> bool:
+                    barrier.wait()
+                    try:
+                        custody.admit_provider_custody(paths["db"], master_key=key, provider_id=identity)
+                        return True
+                    except custody.ProviderCustodyRejected:
+                        return False
+
+                with ThreadPoolExecutor(max_workers=2) as executor:
+                    futures = [executor.submit(admit, identity) for identity in identities]
+                    outcomes = [future.result() for future in futures]
+                self.assertEqual(sum(outcomes), 2 if same_identity else 1)
+                winner = identities[outcomes.index(True)]
+                before = _logical_snapshot(paths["db"])
+                custody.admit_provider_custody(paths["db"], master_key=key, provider_id=winner)
+                self.assertTrue(before == _logical_snapshot(paths["db"]), "winner restart rewrote binding")
+
+    def test_failed_initialization_rolls_back_all_initial_schema(self) -> None:
+        custody = self._custody_service()
+        initialize_audit = getattr(SqliteAuditStore, "initialize_in_transaction", None)
+        self.assertTrue(callable(initialize_audit), "transactional audit initialization is missing")
+        reached = []
+
+        def initialize_then_fail(audit, connection):
+            initialize_audit(audit, connection)
+            reached.append(True)
+            connection.execute("SELECT * FROM missing_custody_atomicity_test_table")
+
+        with tempfile.TemporaryDirectory() as directory:
+            paths = _paths(directory)
+            key = _write_key(paths["key"])
+            with patch.object(SqliteAuditStore, "initialize_in_transaction", initialize_then_fail):
+                with self.assertRaises(custody.ProviderCustodyUnavailable) as context:
+                    custody.admit_provider_custody(paths["db"], master_key=key, provider_id="provider-a")
+            self.assertEqual(str(context.exception), "secret provider custody is unavailable")
+            self.assertEqual(reached, [True])
+            with closing(sqlite3.connect(paths["db"])) as connection:
+                objects = connection.execute("SELECT COUNT(*) FROM sqlite_schema").fetchone()[0]
+            self.assertEqual(objects, 0, "failed initialization committed partial schema")
+
     def test_master_key_loads_from_explicit_mounted_file_configuration(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             paths = _paths(directory)
@@ -646,6 +770,11 @@ def _tamper_labels(database_path: Path, *, labels_json: str) -> None:
                 "UPDATE secret_versions SET labels_json = ?",
                 (labels_json,),
             )
+
+
+def _logical_snapshot(path: Path) -> tuple[str, ...]:
+    with closing(sqlite3.connect(path)) as connection:
+        return tuple(connection.iterdump())
 
 
 if __name__ == "__main__":

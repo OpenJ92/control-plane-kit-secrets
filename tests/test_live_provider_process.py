@@ -4,12 +4,14 @@ import base64
 import json
 import os
 import socket
+import sqlite3
 import subprocess
 import sys
 import tempfile
 import time
 import unittest
 from pathlib import Path
+from contextlib import closing
 
 import httpx
 
@@ -266,14 +268,38 @@ class LiveProviderProcessTests(unittest.TestCase):
                 encoding="utf-8",
             )
             wrong_key_path.chmod(0o600)
-            wrong_environment = {
-                **environment,
-                "CPK_SECRETS_MASTER_KEY_FILE": str(wrong_key_path),
-            }
-            process = _start_provider(port=port, environment=wrong_environment)
+            for changed in (
+                {"CPK_SECRETS_MASTER_KEY_FILE": str(wrong_key_path)},
+                {"CPK_SECRETS_PROVIDER_ID": "different-provider"},
+            ):
+                with self.subTest(changed_setting=tuple(changed)):
+                    with closing(sqlite3.connect(db_path)) as connection:
+                        before = tuple(connection.iterdump())
+                    key_before = key_path.read_bytes()
+                    credentials_before = credentials_path.read_bytes()
+                    process = _start_provider(port=port, environment={**environment, **changed})
+                    try:
+                        try:
+                            denied_stdout, denied_stderr = process.communicate(timeout=10)
+                        except subprocess.TimeoutExpired:
+                            self.fail("incompatible custody did not refuse startup")
+                        self.assertNotEqual(process.returncode, 0)
+                        output = denied_stdout + denied_stderr
+                        self.assertIn("secret provider custody is incompatible", output)
+                        for forbidden in (str(base), token, "different-provider", rotated_value.decode("ascii")):
+                            self.assertFalse(forbidden in output, "custody startup detail leaked")
+                        with closing(sqlite3.connect(db_path)) as connection:
+                            self.assertTrue(before == tuple(connection.iterdump()), "incompatible startup mutated custody")
+                        self.assertTrue(key_before == key_path.read_bytes(), "startup changed master key")
+                        self.assertTrue(credentials_before == credentials_path.read_bytes(), "startup changed credentials")
+                    finally:
+                        if process.poll() is None:
+                            _stop_provider(process)
+
+            process = _start_provider(port=port, environment=environment)
             try:
                 _wait_ready(port)
-                wrong_key = _request(
+                retained = _request(
                     "POST",
                     port,
                     "/v1/workspaces/workspace-1/secrets/wrong-key-target/resolve",
@@ -281,12 +307,11 @@ class LiveProviderProcessTests(unittest.TestCase):
                     json_body={
                         "intent": "postgres.password",
                         "caller_subject": "acceptance",
-                        "correlation_id": "wrong-key",
+                        "correlation_id": "after-rejected-startup",
                     },
                 )
-                self.assertEqual(wrong_key.status_code, 503)
-                self.assertEqual(wrong_key.json()["detail"]["outcome"], "unavailable")
-                self.assertNotIn(rotated_value.decode("ascii"), wrong_key.text)
+                self.assertEqual(retained.status_code, 200)
+                self.assertTrue(base64.b64decode(retained.json()["value_base64"]) == wrong_key_target)
             finally:
                 wrong_stdout, wrong_stderr = _stop_provider(process)
                 self.assertNotIn(rotated_value.decode("ascii"), wrong_stdout + wrong_stderr)
