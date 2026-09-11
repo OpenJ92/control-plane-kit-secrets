@@ -5,7 +5,7 @@
     {
       "source": ".github/workflows/tests.yml",
       "companion": "docs/implementation/.github/workflows/tests.yml.md",
-      "status": "pending",
+      "status": "reviewed",
       "exclusion_reason": null
     },
     {
@@ -17,7 +17,7 @@
     {
       "source": "Dockerfile.test",
       "companion": "docs/implementation/Dockerfile.test.md",
-      "status": "pending",
+      "status": "reviewed",
       "exclusion_reason": null
     },
     {
@@ -35,31 +35,31 @@
     {
       "source": "pyproject.toml",
       "companion": "docs/implementation/pyproject.toml.md",
-      "status": "pending",
+      "status": "reviewed",
       "exclusion_reason": null
     },
     {
       "source": "src/control_plane_kit_secrets/__init__.py",
       "companion": "docs/implementation/src/control_plane_kit_secrets/__init__.py.md",
-      "status": "pending",
+      "status": "reviewed",
       "exclusion_reason": null
     },
     {
       "source": "src/control_plane_kit_secrets/_delegation_signing.py",
       "companion": "docs/implementation/src/control_plane_kit_secrets/_delegation_signing.py.md",
-      "status": "pending",
+      "status": "reviewed",
       "exclusion_reason": null
     },
     {
       "source": "src/control_plane_kit_secrets/api.py",
       "companion": "docs/implementation/src/control_plane_kit_secrets/api.py.md",
-      "status": "pending",
+      "status": "reviewed",
       "exclusion_reason": null
     },
     {
       "source": "src/control_plane_kit_secrets/audit.py",
       "companion": "docs/implementation/src/control_plane_kit_secrets/audit.py.md",
-      "status": "pending",
+      "status": "reviewed",
       "exclusion_reason": null
     },
     {
@@ -83,7 +83,7 @@
     {
       "source": "src/control_plane_kit_secrets/boundaries.py",
       "companion": "docs/implementation/src/control_plane_kit_secrets/boundaries.py.md",
-      "status": "pending",
+      "status": "reviewed",
       "exclusion_reason": null
     },
     {
@@ -101,85 +101,85 @@
     {
       "source": "src/control_plane_kit_secrets/models.py",
       "companion": "docs/implementation/src/control_plane_kit_secrets/models.py.md",
-      "status": "pending",
+      "status": "reviewed",
       "exclusion_reason": null
     },
     {
       "source": "src/control_plane_kit_secrets/py.typed",
       "companion": "docs/implementation/src/control_plane_kit_secrets/py.typed.md",
-      "status": "pending",
+      "status": "reviewed",
       "exclusion_reason": null
     },
     {
       "source": "src/control_plane_kit_secrets/server.py",
       "companion": "docs/implementation/src/control_plane_kit_secrets/server.py.md",
-      "status": "pending",
+      "status": "reviewed",
       "exclusion_reason": null
     },
     {
       "source": "src/control_plane_kit_secrets/store.py",
       "companion": "docs/implementation/src/control_plane_kit_secrets/store.py.md",
-      "status": "pending",
+      "status": "reviewed",
       "exclusion_reason": null
     },
     {
       "source": "test.sh",
       "companion": "docs/implementation/test.sh.md",
-      "status": "pending",
+      "status": "reviewed",
       "exclusion_reason": null
     },
     {
       "source": "test_support/package_integrity.py",
       "companion": "docs/implementation/test_support/package_integrity.py.md",
-      "status": "pending",
+      "status": "reviewed",
       "exclusion_reason": null
     },
     {
       "source": "test_support/tests/test_package_integrity.py",
       "companion": "docs/implementation/test_support/tests/test_package_integrity.py.md",
-      "status": "pending",
+      "status": "reviewed",
       "exclusion_reason": null
     },
     {
       "source": "tests/approved_skips.json",
       "companion": "docs/implementation/tests/approved_skips.json.md",
-      "status": "pending",
+      "status": "reviewed",
       "exclusion_reason": null
     },
     {
       "source": "tests/test_delegation_key_generation.py",
       "companion": "docs/implementation/tests/test_delegation_key_generation.py.md",
-      "status": "pending",
+      "status": "reviewed",
       "exclusion_reason": null
     },
     {
       "source": "tests/test_encrypted_store.py",
       "companion": "docs/implementation/tests/test_encrypted_store.py.md",
-      "status": "pending",
+      "status": "reviewed",
       "exclusion_reason": null
     },
     {
       "source": "tests/test_live_provider_process.py",
       "companion": "docs/implementation/tests/test_live_provider_process.py.md",
-      "status": "pending",
+      "status": "reviewed",
       "exclusion_reason": null
     },
     {
       "source": "tests/test_node_control_signing_families.py",
       "companion": "docs/implementation/tests/test_node_control_signing_families.py.md",
-      "status": "pending",
+      "status": "reviewed",
       "exclusion_reason": null
     },
     {
       "source": "tests/test_package_policy.py",
       "companion": "docs/implementation/tests/test_package_policy.py.md",
-      "status": "pending",
+      "status": "reviewed",
       "exclusion_reason": null
     },
     {
       "source": "tests/test_provider_api.py",
       "companion": "docs/implementation/tests/test_provider_api.py.md",
-      "status": "pending",
+      "status": "reviewed",
       "exclusion_reason": null
     },
     {
