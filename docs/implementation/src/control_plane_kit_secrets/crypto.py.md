@@ -1,0 +1,10 @@
+Source: [src/control_plane_kit_secrets/crypto.py](../../../../src/control_plane_kit_secrets/crypto.py).
+Maintain this document alongside its source file. When the source or relevant imported contracts change, verify and update this companion in the same change.
+
+MasterKey wraps the maintained cryptography AESGCM implementation. The file loaders enforce the required 32-byte key length through _master_key_from_encoded, and encode_master_key_for_file checks it before encoding; direct MasterKey construction does not enforce that admission. Crypto operations delegate to AESGCM. Callers own nonce generation and associated-data meaning; this wrapper does not establish nonce uniqueness or authenticate a provider identity by itself. [custody.py](../../../../src/control_plane_kit_secrets/custody.py) binds the provider/root/schema witness; [store.py](../../../../src/control_plane_kit_secrets/store.py) owns encrypted secret records.
+
+There are two distinct file surfaces. load_master_key_from_environment requires the explicit protected bootstrap file, uses [bootstrap_files.py](../../../../src/control_plane_kit_secrets/bootstrap_files.py) with its bounded checks, then decodes the key. The direct load_master_key_file convenience helper reads text from a path without those protection checks. Do not silently substitute the latter into production bootstrap.
+
+The internal key fingerprint/version is bounded storage evidence, not raw key custody and not material to publish in operational logs or test reports. The master key stays outside the provider database. Repr suppression and fixed crypto messages are useful but do not certify all traceback chains: some helper failures retain causes, and outward callers must normalize appropriately.
+
+[test_encrypted_store.py](../../../../tests/test_encrypted_store.py) covers key admission, restart, tamper and persistence behavior. [pyproject.toml](../../../../pyproject.toml) selects the crypto library; dependency changes require rechecking its contract, not introducing home-grown encryption. This note grants no key rotation, credential access or database operation authority.

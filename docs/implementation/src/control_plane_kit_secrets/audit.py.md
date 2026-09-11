@@ -1,0 +1,8 @@
+Source: [src/control_plane_kit_secrets/audit.py](../../../../src/control_plane_kit_secrets/audit.py).
+Maintain this document alongside its source file. When the source or relevant imported contracts change, verify and update this companion in the same change.
+
+This module owns provider-local audit rows and their SQLite insertion, not caller authentication or a control-plane event stream. audit_record supplies a generated event ID and UTC timestamp; the composing API/store supplies identity, intent, outcome and code. The record constructor does not bound or sanitize arbitrary strings, and the schema has no secret-value field. Callers must still avoid secret-bearing values.
+
+append opens and commits its own connection. append_in_transaction uses the supplied connection without committing, allowing [store.py](../../../../src/control_plane_kit_secrets/store.py) to couple delegation generation and exact-version revocation with audit atomically. These paths are different: do not describe every provider mutation and audit as one transaction. [api.py](../../../../src/control_plane_kit_secrets/api.py) also uses separate append calls.
+
+SQLite insertion errors become AuditUnavailable with an underlying cause. Initialization participates in [custody admission](../../../../src/control_plane_kit_secrets/custody.py) through the caller-owned schema initializer. The independent connection helper may create parent directories. rows_for_tests returns all rows ordered by time/ID; it is a test inspection surface, not a bounded authenticated public history API. Related coverage lives in [test_provider_api.py](../../../../tests/test_provider_api.py) and [test_encrypted_store.py](../../../../tests/test_encrypted_store.py).
