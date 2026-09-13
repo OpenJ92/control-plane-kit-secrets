@@ -100,9 +100,29 @@ Unset the unused credential source. Existing empty-value behavior is preserved:
 a valid file with empty development JSON selects the file; an empty file setting
 with nonempty development JSON rejects. Both nonempty or both absent/empty reject.
 
-Startup validates the existing master-key input and credentials before opening
-custody. Invalid pure configuration exits with `secret provider configuration is
-invalid`, suppressing sensitive chained exception details.
+Startup requires the explicit absolute path in
+`CPK_SECRETS_CONTROL_CONFIGURATION_FILE`. This separate public JSON input uses
+profile `secrets-control-configuration.v1` and contains target/runtime identity,
+the exact V2 liveness declaration on socket `control`, and separate static/health
+issuer and public-verifier-key snapshots. The byte ceiling is 64 KiB; the path
+ceiling is 4096 UTF-8 bytes. No default or disable fallback is provided. The
+public reader checks the opened regular file, uses no-follow/nonblocking flags,
+and permits public read-only modes such as0444. Trusted parent-path integrity
+and authorized delivery remain the caller's responsibility.
+
+The complete ordinary FastAPI host and actual SDK routes are admitted before
+the one delayed initializer reads existing private master-key/credential inputs
+and opens custody. Missing or invalid public configuration exits with
+`secret provider control configuration is invalid`; real SDK namespace collision
+also fails before private reads or custody. Invalid private configuration still
+exits with `secret provider configuration is invalid`. These public and private
+loaders remain separate, with their own fixed outward errors.
+
+Standalone launchers supply their trusted absolute public path. Server product
+adoption belongs to Servers #189, which supplies the canonical public artifact
+at `/etc/cpk/secrets-server/control.json` and its path environment while retaining
+the provider's private inputs, data lifecycle and control port8081/UID10006.
+This package provides the public codec/encoder, not a product artifact factory.
 
 The provider then admits custody under one explicit SQLite transaction. Fresh or
 positively object-free storage receives the complete custody/audit schema and one
@@ -178,16 +198,21 @@ The runtime dependency profile explicitly installs Core
 `2b10d5a354ba4da9407d336703aacb96910100d4` from commit archives. The shared profile
 uses cryptography 50.0.0, PyJWT 2.13.0, FastAPI 0.141.1 and Starlette 1.6.0.
 Core is now an explicit runtime dependency; the prior test-only Core pin has
-been removed. Provider source still imports no Core, and the package root stays
-lightweight. The existing closed signing families and custody/auth/audit behavior
-remain the provider's contracts.
+been removed. Direct Core imports are confined to the public protocol owner
+`control.py`; custody, signing and other provider owners remain Core-free, and
+the package root stays lightweight. Existing closed signing families and
+custody/auth/audit behavior remain the provider's contracts.
 
-SDK route composition is currently exercised only by a compatibility test on
-the real provider app. Production startup does not yet install SDK control or
-health routes or require a control configuration file. The required receiver is
-the separate [#26](https://github.com/OpenJ92/control-plane-kit-secrets/issues/26)
-slice. See the [#25 decision and law record](docs/learning/runtime-control/secrets-25.md)
-for scope, validation status and the dependency-law revision.
+Production now requires the public receiver and installs authenticated SDK static
+and liveness routes. Programmatic `api.create_app` callers supply required
+`control` plus `initialize_provider`, returning the existing store/audit pair and
+admitted provider credentials. Every handler is bound before the app returns.
+SDK reads use separate typed authority and perform no provider authentication,
+secret access or audit writes. Liveness means the initialized process is serving;
+neither it nor the unchanged constant legacy readiness response proves current
+database writability. No readiness callback or mutable variable is advertised.
+See the [#26 law and decision record](docs/learning/runtime-control/secrets-26.md)
+and the retained [#25 dependency checkpoint](docs/learning/runtime-control/secrets-25.md).
 
 Run:
 

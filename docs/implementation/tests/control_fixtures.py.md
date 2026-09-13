@@ -1,0 +1,4 @@
+Source: [tests/control_fixtures.py](../../../tests/control_fixtures.py).
+Maintain this document alongside its source file. When the source or relevant imported contracts change, verify and update this companion in the same change.
+
+This test helper creates actual Core V2 liveness declarations, target/runtime identity, separate typed static/health public-key snapshots and in-memory Ed25519 signing keys. It emits the intended closed public document independently of the production codec, so target tests can collect before the receiver exists. The configuration method exercises the designed owner constructor once available. Signed requests use actual Core grant/request types and PyJWT with purpose-specific headers; mutation arguments let tests exercise a specific identity mismatch. Default clock values are synthetic; real subprocess calls must provide current issuance and bounded lifetime. No fixture is a product default, issuer service or durable authority.

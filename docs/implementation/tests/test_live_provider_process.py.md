@@ -1,7 +1,9 @@
 Source: [tests/test_live_provider_process.py](../../../tests/test_live_provider_process.py).
 Maintain this document alongside its source file. When the source or relevant imported contracts change, verify and update this companion in the same change.
 
-This suite launches Uvicorn on loopback with temporary SQLite custody, generated test keys and explicit fixture credentials. It covers invalid-bootstrap refusal before database creation, persistence across restart, scoped resolution, rotation/revocation, incompatible retained key/provider rejection, and successful access after rejected startup.
+This suite launches Uvicorn on loopback with temporary SQLite custody, generated test keys and explicit fixture credentials. Every original invalid-private case now gets a valid isolated public control document, so its original private error remains the trigger. It preserves invalid-private refusal before DB/parent creation, persistence across restart, scoped resolution, rotation/revocation, incompatible retained key/provider rejection and successful access after rejected startup. Missing/malformed public-input process failures are separate in [test_control_process.py](../../../tests/test_control_process.py).
+
+The retained restart fixture keeps one synthetic public configuration and in-memory signing authority across its explicit process restarts. After each successful startup it mints fresh static/health grants (issuance one second before current time, lifetime120 seconds), checks canonical static and typed liveness results, missing/wrong-purpose denial and unchanged audit rows. Requests use the existing five-second HTTP bound. Public control is0444; private bootstrap files retain0600. Control tokens remain in test memory and join leak checks without being printed or hashed into evidence. Public configuration is not silently replaced after an uncertain effect.
 
 The test compares logical SQLite snapshots and key/credential bytes around incompatible startup, not every SQLite filesystem byte. Leak checks inspect selected fixture material in process output, audit rows and database bytes; authorized resolution deliberately returns encoded material.
 

@@ -14,6 +14,8 @@ from pathlib import Path
 from contextlib import closing
 
 import httpx
+import control_plane_kit_core as core
+from control_fixtures import ControlAuthority
 
 from control_plane_kit_secrets.audit import SqliteAuditStore
 from control_plane_kit_secrets.crypto import encode_master_key_for_file
@@ -44,11 +46,15 @@ class LiveProviderProcessTests(unittest.TestCase):
                     encoding="utf-8",
                 )
                 credentials_path.chmod(0o600)
+                public_control = base / "control.json"
+                public_control.write_bytes(ControlAuthority(f"private-{case}").encoded())
+                public_control.chmod(0o444)
                 environment = {key: value for key, value in os.environ.items()
                                if not key.startswith("CPK_SECRETS_")}
                 environment.update({"CPK_SECRETS_DATABASE_PATH": str(db_path),
                                     "CPK_SECRETS_MASTER_KEY_FILE": str(key_path),
                                     "CPK_SECRETS_CREDENTIALS_FILE": str(credentials_path),
+                                    "CPK_SECRETS_CONTROL_CONFIGURATION_FILE": str(public_control),
                                     "CPK_SECRETS_PROVIDER_ID": "private-provider-marker"})
                 if case == "missing-key":
                     key_path.unlink()
@@ -117,6 +123,11 @@ class LiveProviderProcessTests(unittest.TestCase):
                 encoding="utf-8",
             )
             credentials_path.chmod(0o600)
+            authority = ControlAuthority("restart")
+            public_control = base / "control.json"
+            public_control.write_bytes(authority.encoded())
+            public_control.chmod(0o444)
+            control_tokens = []
             port = _free_port()
             environment = {
                 **os.environ,
@@ -124,11 +135,13 @@ class LiveProviderProcessTests(unittest.TestCase):
                 "CPK_SECRETS_MASTER_KEY_FILE": str(key_path),
                 "CPK_SECRETS_PROVIDER_ID": "provider-live",
                 "CPK_SECRETS_CREDENTIALS_FILE": str(credentials_path),
+                "CPK_SECRETS_CONTROL_CONFIGURATION_FILE": str(public_control),
             }
 
             process = _start_provider(port=port, environment=environment)
             try:
                 _wait_ready(port)
+                control_tokens.extend(_assert_control_reads(self, port, authority, db_path))
                 secret_value = b"live-secret-postgres-password"
                 write = _request(
                     "POST",
@@ -167,6 +180,7 @@ class LiveProviderProcessTests(unittest.TestCase):
             process = _start_provider(port=port, environment=environment)
             try:
                 _wait_ready(port)
+                control_tokens.extend(_assert_control_reads(self, port, authority, db_path))
                 resolved = _resolve(port, token=token, correlation_id="resolve-after-restart")
                 self.assertEqual(resolved.status_code, 200, resolved.text)
                 self.assertEqual(
@@ -261,6 +275,10 @@ class LiveProviderProcessTests(unittest.TestCase):
                 self.assertNotIn(forbidden, leak_surface)
                 self.assertNotIn(forbidden.encode("utf-8"), db_path.read_bytes())
             self.assertNotIn(key_bytes, db_path.read_bytes())
+            for credential in control_tokens:
+                self.assertFalse(credential in leak_surface, "control read credential leaked")
+                self.assertFalse(credential.encode("ascii") in db_path.read_bytes(),
+                                 "control read credential entered custody")
 
             wrong_key_path = base / "wrong-master.key"
             wrong_key_path.write_text(
@@ -296,9 +314,11 @@ class LiveProviderProcessTests(unittest.TestCase):
                         if process.poll() is None:
                             _stop_provider(process)
 
+            final_control_tokens = []
             process = _start_provider(port=port, environment=environment)
             try:
                 _wait_ready(port)
+                final_control_tokens = _assert_control_reads(self, port, authority, db_path)
                 retained = _request(
                     "POST",
                     port,
@@ -315,6 +335,31 @@ class LiveProviderProcessTests(unittest.TestCase):
             finally:
                 wrong_stdout, wrong_stderr = _stop_provider(process)
                 self.assertNotIn(rotated_value.decode("ascii"), wrong_stdout + wrong_stderr)
+                for credential in final_control_tokens:
+                    self.assertFalse(credential in wrong_stdout + wrong_stderr,
+                                     "control read credential leaked after restart")
+
+
+def _assert_control_reads(test, port, authority, database_path):
+    before = SqliteAuditStore(database_path).rows_for_tests()
+    tokens = []
+    for static, path in ((True, "/__control/capabilities"), (False, "/__control/health/liveness")):
+        request, token = authority.signed_read(static=static, issued_at=int(time.time()) - 1, lifetime=120)
+        tokens.append(token)
+        response = _request("GET", port, path, token=token)
+        test.assertEqual(response.status_code, 200)
+        if static:
+            test.assertEqual(response.content, core.NodeControlSurfaceReadResultCodec(
+                request, authority.declaration).capabilities_result().canonical_bytes())
+        else:
+            result = core.NodeHealthReadResultCodec(request, authority.declaration).decode(response.json())
+            test.assertIs(result.outcome, core.NodeHealthReadOutcome.HEALTHY)
+    denied = _request("GET", port, "/__control/health/liveness", token=tokens[0])
+    test.assertEqual(denied.status_code, 401)
+    missing = httpx.get(f"http://127.0.0.1:{port}/__control/health/liveness", timeout=5)
+    test.assertEqual(missing.status_code, 401)
+    test.assertTrue(before == SqliteAuditStore(database_path).rows_for_tests(), "control reads changed audit")
+    return tokens
 
 
 def _start_provider(*, port: int, environment: dict[str, str]) -> subprocess.Popen[str]:

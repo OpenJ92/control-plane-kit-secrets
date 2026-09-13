@@ -16,6 +16,8 @@ from control_plane_kit_secrets.auth import ProviderCredential, ProviderGrant
 from control_plane_kit_secrets.crypto import encode_master_key_for_file, load_master_key_file
 from control_plane_kit_secrets.models import SecretMissing
 from control_plane_kit_secrets.store import EncryptedSecretStore
+from control_plane_kit_secrets import control as control_module
+from control_fixtures import ControlAuthority
 
 
 class ProviderApiTests(unittest.TestCase):
@@ -845,9 +847,10 @@ class _ApiFixture:
         self.audit_store.initialize()
         self.client = TestClient(
             create_app(
-                store=store,
-                audit_store=self.audit_store,
-                credentials=credentials if credentials is not None else (
+                control=ControlAuthority().configuration(control_module),
+                clock=lambda: 150,
+                initialize_provider=lambda: (store, self.audit_store,
+                    credentials if credentials is not None else (
                     ProviderCredential(
                         subject="writer",
                         token="writer-token",
@@ -943,7 +946,7 @@ class _ApiFixture:
                             ProviderGrant("graph.execute", "workspace-1"),
                         ),
                     ),
-                ),
+                )),
             )
         )
 
