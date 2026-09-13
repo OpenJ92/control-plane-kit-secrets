@@ -72,6 +72,21 @@ This repository owns durable secret custody for Control Plane Kit. It is a
 separate security boundary from operations, interpreters, cpk-server, and server
 product publication.
 
+## Implementation Companions
+
+Read `docs/implementation/README.md` and relevant source-path companions before
+changing an owner. Verify actual source and selected contract-bearing imports;
+the prose is navigation, not authority. UPDATE affected notes in the same
+change, including source creates/moves/removals and adopted dependency changes.
+Search consumers rather than assuming selected reverse links are exhaustive.
+
+Review the actual source/dependency diff and record one companion disposition
+in the existing PR log; unchanged meaning needs no manufactured edit. Bring
+newly touched pending files current without blocking unrelated rollout work.
+Use source-aware peer review for custody/auth/redaction claims, not a new
+report, timestamp/hash ledger or CI gate. No companion authorizes credential
+access, custody mutation or retry of an uncertain effect.
+
 ## Ownership
 
 This repository may own:
