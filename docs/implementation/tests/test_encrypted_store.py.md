@@ -1,0 +1,8 @@
+Source: [tests/test_encrypted_store.py](../../../tests/test_encrypted_store.py).
+Maintain this document alongside its source file. When the source or relevant imported contracts change, verify and update this companion in the same change.
+
+These temporary-SQLite tests exercise real provider custody and encryption, not mocked encryption or deployed provider acceptance. They cover restart, provider/key/schema binding, concurrent admission and initialization rollback, protected bootstrap-key reads, ciphertext/metadata tampering, version rotation, whole-reference and exact-version revocation, and correlation-pinned resolution.
+
+Thread/barrier cases assert serialized version allocation, a single selection for the same correlation, and coherent resolve-versus-revoke outcomes. They do not promise a particular scheduling winner. Exact-version replay preserves siblings and records replay audit; resolution replay remains pinned across rotation and cannot bypass revocation.
+
+Selected database bytes, row repr and top-level errors are checked for fixture plaintext/key absence. This is not proof that arbitrary labels, logs or exception chains are safe to publish. Tamper helpers deliberately edit the isolated database to exercise rejection, not a supported repair interface. Read alongside [store.py](../../../src/control_plane_kit_secrets/store.py), [custody.py](../../../src/control_plane_kit_secrets/custody.py) and [crypto.py](../../../src/control_plane_kit_secrets/crypto.py). Use only the owning Docker-backed suite when executable validation is authorized; this documentation change runs none.
