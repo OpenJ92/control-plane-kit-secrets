@@ -17,7 +17,7 @@ required receiver in dependent #26.
 | `test_provider_bootstrap` | Closed bounded typed private input and owner-only file admission; fixed redacted errors | Isomorphic, unchanged |
 | `test_provider_api` | Auth/scope/intent separation, atomic audit and custody, bounded redaction and idempotent correlation | Isomorphic, unchanged |
 | `test_live_provider_process` | Actual process rejects invalid private input before DB or parent creation; retained restart/rotate/revoke and leak checks | Isomorphic, unchanged |
-| New `test_sdk_compatibility` | Actual SDK composes on the existing full provider host, preserving routes/docs and producing an authenticated canonical static result | New compatibility law |
+| New `test_sdk_compatibility` | Actual SDK composes on the existing full provider host, preserving routes/docs and producing authenticated canonical static and typed liveness results | New compatibility law |
 
 Source review found ordinary literal `/v1`, legacy `/health` and default docs
 routes. The actual SDK's complete-host admission supports this existing host;
@@ -28,8 +28,8 @@ ownership: the source AST ban remains unchanged, including pure signing/custody.
 Target tests inspect both declared dependencies and installed `direct_url.json`
 archive provenance, plus actual crypto/framework versions. The composition test
 uses the real provider app, SQLite custody and SDK verifier with an ephemeral
-in-memory signing key. A static test-only declaration is enough to establish
-host compatibility; it is not the future production health declaration. The
+in-memory signing keys. A valid test-only V2 liveness declaration and actual
+health dispatcher establish host compatibility; they do not wire production. The
 existing API, private bootstrap and actual subprocess tests supply the broader
 behavioral compatibility evidence instead of duplicating those suites.
 
@@ -58,6 +58,11 @@ inside the normal Docker test container. Python versions beyond that container's
 3.14 are support metadata, not new validation evidence.
 
 Validation and review are pending. Only the established `./test.sh` is allowed.
+Pre-execution review caught an invalid empty V1 fixture and a cached OpenAPI
+comparison in initial candidate `8eee121`. The fixture now declares V2 liveness,
+uses separate actual static/health authority, checks signed typed liveness plus
+missing/wrong-purpose denial, and regenerates OpenAPI after SDK installation.
+These are fixture corrections before any gate; no failed test run is claimed.
 Its exact issue-specific image/container names must be reviewed before execution
 because the script removes its named container at entry and exit. Source, gate,
 Dockerfile and workflow changes are not needed. #26 must use #25's accepted merge

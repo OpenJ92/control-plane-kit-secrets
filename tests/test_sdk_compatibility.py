@@ -16,10 +16,16 @@ from fastapi.testclient import TestClient
 
 import control_plane_kit_core as core
 from control_plane_kit_server_sdk.fastapi import install_cpk_control_routes
-from control_plane_kit_server_sdk.verification import Ed25519WorkloadNodeControlSurfaceReadVerifier
+from control_plane_kit_server_sdk.health import WorkloadNodeHealthReadDispatcher
+from control_plane_kit_server_sdk.verification import (
+    Ed25519WorkloadNodeControlSurfaceReadVerifier,
+    Ed25519WorkloadNodeHealthReadVerifier,
+)
 from control_plane_kit_server_sdk.verifier_keys import (
     AtomicWorkloadNodeControlSurfaceReadVerifierKeySet,
+    AtomicWorkloadNodeHealthReadVerifierKeySet,
     WorkloadNodeControlSurfaceReadVerifierKeySet,
+    WorkloadNodeHealthReadVerifierKeySet,
 )
 from control_plane_kit_secrets.api import create_app
 from control_plane_kit_secrets.crypto import encode_master_key_for_file, load_master_key_file
@@ -72,8 +78,8 @@ class SdkCompatibilityTests(unittest.TestCase):
                 self.assertEqual(importlib.metadata.version(name), expected)
 
     def test_real_sdk_composes_with_existing_provider_routes_and_docs(self) -> None:
-        # A test-only static declaration proves host compatibility. Production
-        # receiver, health declaration and startup ordering belong to child #26.
+        # A valid test-only V2 declaration proves health SDK host compatibility.
+        # Production receiver and startup ordering belong to child #26.
         roles = core.NodeControlGraphReferenceRole
         target = core.NodeControlTarget(
             core.NodeControlGraphReference(roles.WORKSPACE, "compat-workspace"),
@@ -82,7 +88,10 @@ class SdkCompatibilityTests(unittest.TestCase):
             core.NodeControlGraphReference(roles.PROVIDER_SOCKET, "control"),
         )
         declaration = core.WorkloadNodeControlSurfaceDeclaration(
-            core.WorkloadNodeControlSurfaceDescriptor(target.provider_socket_name, ()),
+            core.WorkloadNodeControlSurfaceDescriptor(
+                target.provider_socket_name, (), health_reads=(core.NodeHealthReadKind.LIVENESS,),
+            ),
+            profile=core.WorkloadNodeControlSurfaceDeclarationProfile.V2,
         )
         private = Ed25519PrivateKey.generate()
         public = core.DelegationPublicKey(
@@ -120,6 +129,52 @@ class SdkCompatibilityTests(unittest.TestCase):
         }, private, algorithm="EdDSA", headers={
             "kid": public.key_id, "typ": "CPK-WORKLOAD-NODE-CONTROL-SURFACE-READ+JWT",
         })
+        runtime = core.NodeControlGraphReference(roles.RUNTIME, "compat-runtime")
+        health_private = Ed25519PrivateKey.generate()
+        health_public = core.DelegationPublicKey(
+            "compat-health-key", core.DelegationKeyAlgorithm.ED25519,
+            health_private.public_key().public_bytes(
+                serialization.Encoding.PEM, serialization.PublicFormat.SubjectPublicKeyInfo,
+            ).decode("ascii"),
+        )
+        health_purpose = core.DelegationKeyPurpose.WORKLOAD_NODE_HEALTH_READ
+        health_verifier = Ed25519WorkloadNodeHealthReadVerifier(
+            AtomicWorkloadNodeHealthReadVerifierKeySet(
+                WorkloadNodeHealthReadVerifierKeySet(health_purpose, (health_public,)),
+            ),
+            expected_issuer="compat-health-issuer",
+            expected_audience=core.workload_node_control_audience(target), clock=lambda: 150,
+        )
+        health_request = core.NodeHealthReadRequest(
+            target, runtime, core.NodeHealthReadKind.LIVENESS,
+            declaration.identity(), "compat-health-request",
+        )
+        health_grant = core.DelegatedWorkloadNodeHealthReadGrant(
+            profile=core.DelegatedWorkloadNodeHealthReadGrantProfile.V1,
+            canonicalization=core.NodeControlCanonicalization.JCS_RFC8785_V1,
+            purpose=health_purpose, issuer="compat-health-issuer", key_id=health_public.key_id,
+            audience=core.workload_node_control_audience(target), target=target, runtime_id=runtime,
+            kind=health_request.kind, declaration_identity=health_request.declaration_identity,
+            request_id=health_request.request_id, request_digest=health_request.canonical_digest(),
+            issued_at=100, not_before=100, expires_at=200, jti="compat-health-grant",
+        )
+        health_token = jwt.encode({
+            "iss": health_grant.issuer, "aud": health_grant.audience, "iat": health_grant.issued_at,
+            "nbf": health_grant.not_before, "exp": health_grant.expires_at, "jti": health_grant.jti,
+            "workload_node_health_read": health_grant.descriptor(),
+        }, health_private, algorithm="EdDSA", headers={
+            "kid": health_public.key_id, "typ": "CPK-WORKLOAD-NODE-HEALTH-READ+JWT",
+        })
+        observations = []
+
+        def observe_liveness():
+            observations.append(core.NodeHealthReadKind.LIVENESS)
+            return core.NodeHealthReadOutcome.HEALTHY
+
+        dispatcher = WorkloadNodeHealthReadDispatcher(
+            target=target, runtime_id=runtime, declaration=declaration,
+            verifier=health_verifier, liveness=observe_liveness, readiness=None,
+        )
         with tempfile.TemporaryDirectory() as directory:
             base = Path(directory)
             key_path = base / "master.key"
@@ -134,7 +189,10 @@ class SdkCompatibilityTests(unittest.TestCase):
             prior_routes = tuple(app.routes)
             prior_schema = json.loads(json.dumps(app.openapi()))
             install_cpk_control_routes(app, target=target, declaration=declaration,
-                                       surface_read_verifier=verifier)
+                                       surface_read_verifier=verifier, health_dispatcher=dispatcher)
+            # Regenerate after installation so the comparison cannot pass merely
+            # because the pre-install schema remains in FastAPI's cache.
+            app.openapi_schema = None
             self.assertEqual(tuple(app.routes[:len(prior_routes)]), prior_routes)
             with TestClient(app) as client:
                 response = client.get("/__control/capabilities",
@@ -144,6 +202,16 @@ class SdkCompatibilityTests(unittest.TestCase):
                     request, declaration,
                 ).capabilities_result().canonical_bytes())
                 self.assertEqual(client.get("/__control/capabilities").status_code, 401)
+                self.assertEqual(observations, [])
+                live = client.get("/__control/health/liveness",
+                                  headers={"Authorization": f"Bearer {health_token}"})
+                self.assertEqual(live.status_code, 200)
+                result = core.NodeHealthReadResultCodec(health_request, declaration).decode(live.json())
+                self.assertIs(result.outcome, core.NodeHealthReadOutcome.HEALTHY)
+                self.assertEqual(client.get("/__control/health/liveness").status_code, 401)
+                self.assertEqual(client.get("/__control/health/liveness",
+                    headers={"Authorization": f"Bearer {token}"}).status_code, 401)
+                self.assertEqual(observations, [core.NodeHealthReadKind.LIVENESS])
                 self.assertEqual(client.get("/health/live").json(), {"status": "live"})
                 self.assertEqual(client.get("/health/ready").json(), {"status": "ready"})
                 self.assertEqual(client.get("/openapi.json").json(), prior_schema)
