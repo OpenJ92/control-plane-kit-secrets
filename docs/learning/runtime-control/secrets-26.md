@@ -89,7 +89,7 @@ The gate remains the existing ./test.sh; exact red/green image/container names,
 entry cleanup preflight, terminal results and independent runner absence must be
 reviewed and recorded. No alternative runner or hidden reduction is introduced.
 
-## Classified target-red and current evidence limit
+## Classified target-red checkpoint
 
 The [minimal reviewed red result](https://github.com/OpenJ92/control-plane-kit-secrets/issues/26#issuecomment-5651505907)
 records21 policy and all77 predecessor package tests green. All88 package tests
@@ -100,10 +100,11 @@ later process redaction/no-DB checks and the final standalone import stage were
 unreached. Both independent reviewers accepted the causal red without retry.
 
 The detailed execution record stays local; only the separately reviewed minimal
-summary was published. Implementation has not yet received a green run. Source
-review added exact byte-ceiling and pure path-before-IO checks within existing
-target methods; no separate red is claimed for those added assertions. Submit
-the completed source/fixture/companion seal before any green or hosted execution.
+summary was published. At that checkpoint implementation had not received a green
+run. Source review added exact byte-ceiling and pure path-before-IO checks within
+existing target methods; no separate red is claimed for those added assertions.
+The source/fixture/companion seal and later corrections received independent
+review before the owning green runs described below.
 
 ## Security and handoff
 
@@ -114,6 +115,28 @@ Servers189/191 product/image adoption, Core1821/Interpreters149 authorized deliv
 and public/grandparent acceptance remain separate. No provider credential use,
 registry upload, native adapter or held163 retry follows from this checkpoint.
 
-Source review found a proof gap in the strengthened invalid-path test: the reader normalizes ordinary exceptions, including the mock's AssertionError. The test now explicitly asserts that os.open was not called after each rejection. Production behavior is unchanged; this correction awaits the same full green gate and carries no new red execution claim.
+Source review found a proof gap in the strengthened invalid-path test: the reader normalizes ordinary exceptions, including the mock's AssertionError. The test now explicitly asserts that os.open was not called after each rejection. Production behavior is unchanged. This correction was subsequently exercised by the reviewed full gate; it carries no new red execution claim.
 
-The first implementation gate passed21 policy tests and87 of88 package tests, with one failure and no errors/skips; final standalone installed-root import was unreached. The initializer test incorrectly expected a literal liveness route in FastAPI's registered paths, while the SDK installs Core's parameterized health route. Review classified this as a fixture route-shape error, not demonstrated startup-order failure. The corrected test requires the actual canonical route name/path/method and a full match for concrete GET liveness before real custody. All ordinary/static route, no-prior-custody, exactly-once and failure/no-return assertions remain. Production is unchanged; no successful retry is claimed.
+The first implementation gate passed21 policy tests and87 of88 package tests, with one failure and no errors/skips; final standalone installed-root import was unreached. The initializer test incorrectly expected a literal liveness route in FastAPI's registered paths, while the SDK installs Core's parameterized health route. Review classified this as a fixture route-shape error, not demonstrated startup-order failure. The corrected test requires the actual canonical route name/path/method and a full match for concrete GET liveness before real custody. All ordinary/static route, no-prior-custody, exactly-once and failure/no-return assertions remain. Production was unchanged by the correction. That failed attempt remains non-green; the separately reviewed corrected run is recorded below.
+
+## Accepted corrected local validation
+
+Both independent reviewers accepted the narrow route-matching correction before
+one separately released full owning run. That corrected run passed all21 policy
+tests and all88 package tests, with no failures, errors, skips or integrity
+findings. Build/compilation and the final standalone installed-package import
+also passed. The previously unreached initializer assertions now pass through
+concrete route matching, no prior custody, real initialization, exactly-once
+behavior after return/request and no returned app on initialization failure.
+
+Both reviewers independently reconciled the retained complete log and accepted
+the corrected local source/package evidence. Existing private refusal, custody,
+authorization, signing and real-process restart/rotation/revocation laws pass
+alongside the new public-admission and signed SDK read laws. Earlier red and
+failed-green evidence remains historical and is not retroactively credited.
+
+Source publication and matching hosted validation are still pending at this
+documentation checkpoint. The local result does not establish product-image
+publication, public delivery, storage readiness or broader parent acceptance.
+Detailed execution/environment records remain local; only bounded reviewed
+behavioral summaries belong in public handoffs.
