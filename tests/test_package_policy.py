@@ -67,6 +67,8 @@ class PackagePolicyTests(unittest.TestCase):
         findings: list[str] = []
         for path in sorted(SRC_ROOT.rglob("*.py")):
             overlap = imported_roots(path) & forbidden
+            if path == SRC_ROOT / "control.py":
+                overlap.discard("control_plane_kit_core")
             for name in sorted(overlap):
                 findings.append(f"{path.relative_to(REPO_ROOT)} imports {name}")
 
@@ -96,6 +98,7 @@ for name in (
     "sqlalchemy",
     "control_plane_kit_operations",
     "control_plane_kit_core",
+    "control_plane_kit_server_sdk",
     "control_plane_kit_interpreters",
     "control_plane_kit_servers",
     "control_plane_kit_servers_cpk_server",
@@ -129,6 +132,7 @@ for name in (
                 "bootstrap.py",
                 "bootstrap_files.py",
                 "boundaries.py",
+                "control.py",
                 "crypto.py",
                 "custody.py",
                 "models.py",

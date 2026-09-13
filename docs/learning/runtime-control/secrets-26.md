@@ -53,9 +53,8 @@ The original77 tests are unchanged in this checkpoint. New tests collect with
 accepted modules; direct receiver tests assert the missing named interface
 explicitly before importing it, while the API signature test and real subprocess
 law independently expose missing behavior. No module stub, skip, xfail or
-optional fallback supplies the missing receiver. No executable red run has yet
-occurred. Review the actual test/fixture seal and exact owner-gate plan before
-target-red execution or application implementation.
+optional fallback supplies the missing receiver. The reviewed checkpoint was then
+executed once through the owner gate; its classified result is recorded below.
 
 The public subprocess test has three cases with valid generated private inputs.
 On the old predecessor, missing public admission can start the process and create
@@ -65,21 +64,22 @@ It then fails for ignored required public admission. This expected target-red
 effect is explicit; it uses no user credentials, provider resources or external
 ingress. Output checks are bounded after capture, not continuously capped pipes.
 
-## Planned implementation and fixture translation
+## Implementation and fixture translation
 
-After classified target-red evidence, implement only control.py/api.py/server.py
-and the narrow ownership-policy update. Migrate the three existing create_app
-test callers to required synthetic control plus their real initializer. Preserve
-all API/signing assertions. Translate #25's compatibility test through production
-composition without double SDK installation; retain canonical static/typed health,
-denial/observation and fresh-schema parity laws by forwarding through the actual
-SDK installer and regenerating OpenAPI after installation.
+After classified target-red and the coordinated source release, implementation
+adds control.py and changes only api.py/server.py production startup composition.
+Custody, auth, private loaders, signing and dependencies remain unchanged. The
+source policy permits Core only in control.py and adds SDK to the cold-root ban.
+The three existing factory callers now supply required synthetic control plus
+their real initializer, preserving API/signing assertions. The compatibility
+test forwards through actual production SDK installation exactly once, retaining
+canonical static/typed health, denial/observation and fresh-schema parity laws.
 
-Every existing invalid-private subprocess case must get valid public control so
+Every existing invalid-private subprocess case gets valid public control so
 its original private error remains the trigger. Restart fixtures get isolated
 public documents and fresh scoped grants from in-memory keys, while keeping
 private0600/custody/audit/leak assertions. Fixture grants use explicit test clocks
-or at most120-second real-process lifetimes; mint fresh requests as new test
+or120-second real-process lifetimes; mint fresh requests as new test
 setup, never retry an uncertain live effect. Existing owner Docker container,
 TemporaryDirectory and loopback subprocess bounds remain the mechanisms.
 
@@ -88,6 +88,22 @@ unchanged dependency consumers. The initial documentation inventory is historica
 The gate remains the existing ./test.sh; exact red/green image/container names,
 entry cleanup preflight, terminal results and independent runner absence must be
 reviewed and recorded. No alternative runner or hidden reduction is introduced.
+
+## Classified target-red and current evidence limit
+
+The [minimal reviewed red result](https://github.com/OpenJ92/control-plane-kit-secrets/issues/26#issuecomment-5651505907)
+records21 policy and all77 predecessor package tests green. All88 package tests
+collected;13 failure records were exactly nine missing-receiver guards, one
+required-control signature failure and three process deadline subcases. No
+collection, fixture or apparatus errors occurred. Downstream guarded assertions,
+later process redaction/no-DB checks and the final standalone import stage were
+unreached. Both independent reviewers accepted the causal red without retry.
+
+The detailed execution record stays local; only the separately reviewed minimal
+summary was published. Implementation has not yet received a green run. Source
+review added exact byte-ceiling and pure path-before-IO checks within existing
+target methods; no separate red is claimed for those added assertions. Submit
+the completed source/fixture/companion seal before any green or hosted execution.
 
 ## Security and handoff
 

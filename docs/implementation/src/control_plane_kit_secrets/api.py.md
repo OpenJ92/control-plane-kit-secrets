@@ -3,7 +3,9 @@ Maintain this document alongside its source file. When the source or relevant im
 
 ## HTTP boundary
 
-create_app composes injected stores with bearer authentication and action/workspace/intent authorization. It exposes secret write, rotate, resolve, revoke, exact-version revoke, delegation generation and metadata operations; it does not own CPK planning, execution or MCP. Health endpoints return fixed live/ready values, not per-request database checks.
+create_app requires public control configuration and one named ProviderInitializer. It revalidates the public input, constructs all ordinary literal routes, prepares separate typed SDK static/health dependencies and admits the complete actual SDK host before invoking the initializer once. Only then does it bind the returned real store/audit/credentials and ProviderAuthorizer into handler closures and return the app. Invalid public input or a real route collision precedes private initialization; failure returns no app, and no request lazily initializes custody. Arbitrary caller initializer effects retain their own rollback semantics.
+
+The provider still exposes secret write, rotate, resolve, revoke, exact-version revoke, delegation generation and metadata with bearer action/workspace/intent authorization; it does not own CPK planning, execution or MCP. SDK static/liveness routes have independent typed authority and do no provider auth/store/audit work. Legacy health remains fixed live/ready responses, not per-request database checks. Public protocol preparation belongs to [control.py](../../../../src/control_plane_kit_secrets/control.py); private/custody initialization belongs to [server.py](../../../../src/control_plane_kit_secrets/server.py) and its existing owners.
 
 Request caller_subject is supplied audit/correlation context, not another authenticated identity. Credential grants authorize the action. Write/rotate canonicalize the intent label; resolution requires matching durable intent. Generation has a distinct permission and derives intent from the local signing-family map. Revocation requires secret.revoke.
 

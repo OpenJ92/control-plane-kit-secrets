@@ -41,6 +41,9 @@ class ControlConfigurationTests(unittest.TestCase):
         self.assertLessEqual(len(raw), 65536)
         self.assertEqual(json.loads(raw), authority.document())
         self.assertEqual(receiver.decode_secrets_control_configuration(raw), configuration)
+        at_limit = raw + b" " * (65536 - len(raw))
+        self.assertEqual(receiver.decode_secrets_control_configuration(at_limit), configuration)
+        self.assert_rejected(receiver, lambda: receiver.decode_secrets_control_configuration(at_limit + b" "))
         self.assertEqual(configuration.declaration.surface.variables, ())
         self.assertEqual(configuration.declaration.surface.health_reads, (core.NodeHealthReadKind.LIVENESS,))
 
@@ -110,6 +113,12 @@ class ControlConfigurationTests(unittest.TestCase):
             self.assertEqual(opened[0] & os.O_ACCMODE, os.O_RDONLY)
             for flag in (os.O_NOFOLLOW, os.O_NONBLOCK, os.O_CLOEXEC):
                 self.assertTrue(opened[0] & flag)
+            for invalid_path in (None, "", "relative.json", "/" + "x" * 4096,
+                                 "/" + "\u00e9" * 2048, "/bad\x00path"):
+                with patch("os.open", side_effect=AssertionError("invalid path reached filesystem")):
+                    self.assert_rejected(receiver, lambda: receiver.read_secrets_control_configuration(
+                        {ENVIRONMENT_KEY: invalid_path},
+                    ))
             alias = base / "alias.json"
             alias.symlink_to(public)
             for environment in (

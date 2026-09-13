@@ -32,6 +32,8 @@ from control_plane_kit_secrets.crypto import (
 from control_plane_kit_secrets.models import SecretMetadataInvalid, SecretTampered
 from control_plane_kit_secrets import store as store_module
 from control_plane_kit_secrets.store import EncryptedSecretStore
+from control_plane_kit_secrets import control as control_module
+from control_fixtures import ControlAuthority
 
 
 FAMILIES = (
@@ -415,9 +417,9 @@ class _Fixture:
         intents = tuple(intent for _purpose, intent in FAMILIES)
         self.client = TestClient(
             create_app(
-                store=self.store,
-                audit_store=self.audit,
-                credentials=(
+                control=ControlAuthority().configuration(control_module),
+                clock=lambda: 150,
+                initialize_provider=lambda: (self.store, self.audit, (
                     ProviderCredential(
                         subject="generator",
                         token="generation-token",
@@ -436,7 +438,7 @@ class _Fixture:
                             ProviderGrant("secret.resolve", "workspace-1", intents),
                         ),
                     ),
-                ),
+                )),
             )
         )
 

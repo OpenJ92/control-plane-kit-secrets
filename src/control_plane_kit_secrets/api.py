@@ -4,11 +4,13 @@ import base64
 import binascii
 from hashlib import sha256
 import re
-from typing import Any
+import time
+from typing import Any, Callable
 from urllib.parse import urlsplit
 
 from fastapi import Depends, FastAPI, Header, HTTPException
 from pydantic import BaseModel, Field
+from control_plane_kit_server_sdk.fastapi import install_cpk_control_routes
 
 from .audit import AuditUnavailable, SqliteAuditStore, audit_record
 from .auth import (
@@ -31,6 +33,12 @@ from .models import (
     SecretVersionRevocationConflict,
 )
 from .store import EncryptedSecretStore
+from .control import (
+    SecretsControlConfiguration,
+    create_control_read_dependencies,
+    decode_secrets_control_configuration,
+    encode_secrets_control_configuration,
+)
 
 
 MAX_SECRET_BYTES = 64 * 1024
@@ -104,14 +112,18 @@ class DelegationKeyGenerateRequest(BaseModel):
     correlation_id: str = Field(min_length=1, max_length=MAX_CORRELATION_CHARS)
 
 
+ProviderInitialization = tuple[EncryptedSecretStore, SqliteAuditStore, tuple[ProviderCredential, ...]]
+ProviderInitializer = Callable[[], ProviderInitialization]
+
+
 def create_app(
     *,
-    store: EncryptedSecretStore,
-    audit_store: SqliteAuditStore,
-    credentials: tuple[ProviderCredential, ...],
+    control: SecretsControlConfiguration,
+    initialize_provider: ProviderInitializer,
     provider_id: str = "local-dev-provider",
+    clock: Callable[[], int] = lambda: int(time.time()),
 ) -> FastAPI:
-    authorizer = ProviderAuthorizer(credentials)
+    control = decode_secrets_control_configuration(encode_secrets_control_configuration(control))
     app = FastAPI(title="control-plane-kit-secrets")
 
     def credential(authorization: str | None = Header(default=None)) -> ProviderCredential:
@@ -851,6 +863,15 @@ def create_app(
             )
             raise _error(404, "missing", "secret-missing") from exc
 
+    surface_verifier, health_dispatcher = create_control_read_dependencies(control, clock=clock)
+    install_cpk_control_routes(
+        app, target=control.target, declaration=control.declaration,
+        surface_read_verifier=surface_verifier, health_dispatcher=health_dispatcher,
+    )
+    # Complete host admission precedes the single protected/durable effect.
+    # All handler closures are bound before this app can be returned or served.
+    store, audit_store, credentials = initialize_provider()
+    authorizer = ProviderAuthorizer(credentials)
     return app
 
 
