@@ -115,10 +115,11 @@ class ControlConfigurationTests(unittest.TestCase):
                 self.assertTrue(opened[0] & flag)
             for invalid_path in (None, "", "relative.json", "/" + "x" * 4096,
                                  "/" + "\u00e9" * 2048, "/bad\x00path"):
-                with patch("os.open", side_effect=AssertionError("invalid path reached filesystem")):
+                with patch("os.open", side_effect=AssertionError("invalid path reached filesystem")) as opened:
                     self.assert_rejected(receiver, lambda: receiver.read_secrets_control_configuration(
                         {ENVIRONMENT_KEY: invalid_path},
                     ))
+                    opened.assert_not_called()
             alias = base / "alias.json"
             alias.symlink_to(public)
             for environment in (

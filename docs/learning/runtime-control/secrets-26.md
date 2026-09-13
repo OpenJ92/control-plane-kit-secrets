@@ -113,3 +113,5 @@ provider work from SDK reads and no stronger storage-readiness claim. Parent24,
 Servers189/191 product/image adoption, Core1821/Interpreters149 authorized delivery
 and public/grandparent acceptance remain separate. No provider credential use,
 registry upload, native adapter or held163 retry follows from this checkpoint.
+
+Source review found a proof gap in the strengthened invalid-path test: the reader normalizes ordinary exceptions, including the mock's AssertionError. The test now explicitly asserts that os.open was not called after each rejection. Production behavior is unchanged; this correction awaits the same full green gate and carries no new red execution claim.
