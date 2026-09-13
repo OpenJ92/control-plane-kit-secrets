@@ -33,7 +33,7 @@ host compatibility; it is not the future production health declaration. The
 existing API, private bootstrap and actual subprocess tests supply the broader
 behavioral compatibility evidence instead of duplicating those suites.
 
-Focused laws are committed before dependency implementation. No executable red
+Focused laws were committed as `43d8c98` before dependency implementation. No executable red
 run is claimed: North released source preparation only, and the ordinary owner
 gate awaits candidate/fixture review and its concrete release. The pre-change
 metadata lacks the required SDK and pins the old test-only Core; that is source

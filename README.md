@@ -173,6 +173,22 @@ interpreter behavior.
 
 ## Validation
 
+The runtime dependency profile explicitly installs Core
+`95452249d0340707a5cdffe737e34669e9d53165` and server SDK `[fastapi]`
+`2b10d5a354ba4da9407d336703aacb96910100d4` from commit archives. The shared profile
+uses cryptography 50.0.0, PyJWT 2.13.0, FastAPI 0.141.1 and Starlette 1.6.0.
+Core is now an explicit runtime dependency; the prior test-only Core pin has
+been removed. Provider source still imports no Core, and the package root stays
+lightweight. The existing closed signing families and custody/auth/audit behavior
+remain the provider's contracts.
+
+SDK route composition is currently exercised only by a compatibility test on
+the real provider app. Production startup does not yet install SDK control or
+health routes or require a control configuration file. The required receiver is
+the separate [#26](https://github.com/OpenJ92/control-plane-kit-secrets/issues/26)
+slice. See the [#25 decision and law record](docs/learning/runtime-control/secrets-25.md)
+for scope, validation status and the dependency-law revision.
+
 Run:
 
 ```bash

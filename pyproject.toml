@@ -13,13 +13,13 @@ authors = [
   { name = "OpenJ92" }
 ]
 dependencies = [
-  "cryptography>=42",
-  "fastapi>=0.116",
+  "cryptography==50.0.0",
+  "control-plane-kit-core @ https://github.com/OpenJ92/control-plane-kit/archive/95452249d0340707a5cdffe737e34669e9d53165.zip#subdirectory=control-plane-kit-core",
+  "control-plane-kit-server-sdk[fastapi] @ https://github.com/OpenJ92/control-plane-kit-server-sdk/archive/2b10d5a354ba4da9407d336703aacb96910100d4.zip",
 ]
 
 [project.optional-dependencies]
 test = [
-  "control-plane-kit-core @ git+https://github.com/OpenJ92/control-plane-kit.git@a62af8431afb878fa0beed3b752cbdf7a640fb48#subdirectory=control-plane-kit-core",
   "httpx>=0.28",
   "uvicorn>=0.35",
 ]
