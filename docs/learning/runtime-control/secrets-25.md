@@ -2,7 +2,9 @@
 
 Parent [#24](https://github.com/OpenJ92/control-plane-kit-secrets/issues/24),
 child [#25](https://github.com/OpenJ92/control-plane-kit-secrets/issues/25),
-base `68d0da6aed3a383d6bdc284cf4a6a6063a31487e`, destination `main`.
+original base `68d0da6aed3a383d6bdc284cf4a6a6063a31487e`, destination `main`.
+Accepted documentation-only main `512e2b7361e438de6bbadb4d006b74ca90eac1d0`
+is integrated without changing the reviewed `ca3b36f` implementation.
 The reviewed design separates installed dependency compatibility from the
 required receiver in dependent #26.
 
@@ -68,3 +70,19 @@ because the script removes its named container at entry and exit. Source, gate,
 Dockerfile and workflow changes are not needed. #26 must use #25's accepted merge
 and add its own required receiver, startup-order and health tests. Servers #189
 and #191 retain product artifact and image qualification ownership.
+
+## Companion disposition
+
+After accepted PR #23, update the metadata, signing-family implementation/test
+and package-policy companions to distinguish explicit installed Core/SDK from
+the unchanged source-import ban. Add the new compatibility-test companion,
+including valid V2 composition and fresh OpenAPI proof. The initial #22 inventory
+remains its historical 31-path coverage record; it is not repurposed into an
+ongoing freshness ledger. README and this learning note are maintained directly.
+
+Review of selected dependency consumers found the crypto, API, custody, private
+loaders, process and gate notes still describe their unchanged source contracts:
+companion reviewed; no semantic update needed. The exact crypto/framework
+version adoption and test-only SDK composition are described in the metadata
+and new test notes. This bounded documentation integration supplies no new
+runtime or validation evidence; source tests and gate still await execution.
