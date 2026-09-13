@@ -7,7 +7,6 @@ import sqlite3
 import subprocess
 import sys
 import tempfile
-import tomllib
 import unittest
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import closing
@@ -35,8 +34,6 @@ from control_plane_kit_secrets import store as store_module
 from control_plane_kit_secrets.store import EncryptedSecretStore
 
 
-REPO_ROOT = Path(__file__).parents[1]
-CORE_COMMIT = "a62af8431afb878fa0beed3b752cbdf7a640fb48"
 FAMILIES = (
     (
         DelegationKeyPurpose.GATEWAY_PROBE.value,
@@ -54,30 +51,12 @@ FAMILIES = (
 
 
 class NodeControlSigningFamilyTests(unittest.TestCase):
-    def test_family_contract_matches_pinned_core_while_production_stays_core_free(
+    def test_family_contract_matches_pinned_core_while_source_and_root_stay_core_free(
         self,
     ) -> None:
-        project = tomllib.loads(
-            (REPO_ROOT / "pyproject.toml").read_text(encoding="utf-8")
-        )["project"]
-        production = tuple(project["dependencies"])
-        test_dependencies = tuple(project["optional-dependencies"]["test"])
-
-        self.assertFalse(
-            any("control-plane-kit-core" in dependency for dependency in production)
-        )
-        self.assertEqual(
-            tuple(
-                dependency
-                for dependency in test_dependencies
-                if "control-plane-kit-core" in dependency
-            ),
-            (
-                "control-plane-kit-core @ git+https://github.com/OpenJ92/"
-                f"control-plane-kit.git@{CORE_COMMIT}"
-                "#subdirectory=control-plane-kit-core",
-            ),
-        )
+        # #25 replaces the old test-only Core packaging assertion with the
+        # explicit runtime/provenance laws in test_sdk_compatibility. Source
+        # ownership, root imports and the closed signing-family behavior remain.
         imported = subprocess.run(
             [
                 sys.executable,
