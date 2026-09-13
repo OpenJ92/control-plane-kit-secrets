@@ -11,6 +11,8 @@ from unittest.mock import patch
 
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
+from starlette.routing import Match
+from control_plane_kit_core.control_routes import NODE_HEALTH_ROUTES
 import control_plane_kit_core as core
 from control_plane_kit_secrets import api, bootstrap, crypto
 from control_plane_kit_secrets.audit import SqliteAuditStore
@@ -101,9 +103,20 @@ class ControlReceiverTests(unittest.TestCase):
                 calls.append("initialize")
                 paths = {route.path for route in app.routes}
                 self.assertTrue({"/__control/capabilities", "/__control/status",
-                                 "/__control/health/liveness", "/health/live", "/health/ready",
+                                 "/health/live", "/health/ready",
                                  "/docs", "/openapi.json"} <= paths)
                 self.assertTrue(any(path.startswith("/v1/") for path in paths))
+                health = NODE_HEALTH_ROUTES.routes[0]
+                health_routes = [route for route in app.routes
+                                 if route.name == health.name and route.path == health.path
+                                 and route.methods == {health.method.value}]
+                self.assertEqual(len(health_routes), 1)
+                match, child_scope = health_routes[0].matches({
+                    "type": "http", "method": "GET", "path": "/__control/health/liveness",
+                    "root_path": "",
+                })
+                self.assertIs(match, Match.FULL)
+                self.assertEqual(child_scope["path_params"], {"health_kind": "liveness"})
                 self.assertFalse(database.parent.exists())
                 stores = admit_provider_custody(database, master_key=crypto.load_master_key_file(key_path),
                                                provider_id="initializer-test")
