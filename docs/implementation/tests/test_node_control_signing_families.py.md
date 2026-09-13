@@ -1,7 +1,7 @@
 Source: [tests/test_node_control_signing_families.py](../../../tests/test_node_control_signing_families.py).
 Maintain this document alongside its source file. When the source or relevant imported contracts change, verify and update this companion in the same change.
 
-These tests compare the provider's finite family map with the exact test-only Core pin while checking that production package import stays Core-free. Direct-store negatives protect rejection before writes; API cases check family-specific resolution and cross-family denial.
+These tests compare the provider's finite family map with the exact adopted runtime Core contract while checking that importing the package root does not import Core. The old test-only Core packaging assertion was deliberately replaced by explicit runtime and installed-provenance laws in [test_sdk_compatibility.py](../../../tests/test_sdk_compatibility.py). The three-family map and unsupported-purpose assertions are preserved. Direct-store negatives protect rejection before writes; API cases check family-specific resolution and cross-family denial.
 
 Restart/concurrent replay preserves family and public identity. Tampering cases distinguish generation-row drift from authenticated secret metadata. Oversized persisted public PEM/key IDs must fail before material matching; a temporary sentinel replacement checks that ordering without defining another production validator.
 
