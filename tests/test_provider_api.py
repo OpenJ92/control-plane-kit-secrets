@@ -29,6 +29,8 @@ class ProviderApiTests(unittest.TestCase):
             "gateway.probe-signing-key", "gateway.node-control-transit-signing-key",
             "oci.pull-credential", "postgres.password", "workload.node-control-signing-key",
             "secrets.custody-root-key", "secrets.provider-credentials-document",
+            "gateway.node-health-read-transit-signing-key",
+            "workload.node-health-read-signing-key",
         }))
 
     def test_bootstrap_purpose_resolution_preserves_exact_and_wildcard_authority(self) -> None:
