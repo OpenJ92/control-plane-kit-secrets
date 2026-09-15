@@ -148,7 +148,7 @@ class NodeControlSigningFamilyTests(unittest.TestCase):
                         purpose=purpose,
                         suffix=f"family-{index}",
                     )
-                    self.assertEqual(generated.status_code, 200, generated.text)
+                    self.assertEqual(generated.status_code, 200, "generation did not succeed")
                     payload = generated.json()
                     self.assertEqual(payload["purpose"], purpose)
                     public_key = DelegationPublicKey(
@@ -166,7 +166,7 @@ class NodeControlSigningFamilyTests(unittest.TestCase):
                         intent=intent,
                         correlation_id=f"resolve-family-{index}",
                     )
-                    self.assertEqual(resolved.status_code, 200, resolved.text)
+                    self.assertEqual(resolved.status_code, 200, "resolution did not succeed")
                     private_key = serialization.load_pem_private_key(
                         base64.b64decode(resolved.json()["value_base64"]),
                         password=None,
@@ -406,13 +406,13 @@ class NodeControlSigningFamilyTests(unittest.TestCase):
                         purpose=purpose,
                         suffix="redaction",
                     )
-                    self.assertEqual(generated.status_code, 200, generated.text)
+                    self.assertEqual(generated.status_code, 200, "generation did not succeed")
                     resolved = fixture.resolve_api(
                         secret_id="key-redaction",
                         intent=intent,
                         correlation_id="resolve-redaction",
                     )
-                    self.assertEqual(resolved.status_code, 200, resolved.text)
+                    self.assertEqual(resolved.status_code, 200, "resolution did not succeed")
                     private_pem = base64.b64decode(resolved.json()["value_base64"])
 
                     with closing(sqlite3.connect(fixture.database_path)) as connection:
@@ -420,7 +420,7 @@ class NodeControlSigningFamilyTests(unittest.TestCase):
                     evidence = generated.text + repr(fixture.audit.rows_for_tests()) + database_dump
                     self.assertTrue("BEGIN PRIVATE KEY" not in evidence, "private material marker leaked")
                     self.assertTrue(private_pem.decode("ascii") not in evidence, "private material leaked")
-                    self.assertNotIn("value_base64", generated.text)
+                    self.assertTrue("value_base64" not in generated.text, "generation exposed material field")
 
 
     def test_health_scope_denial_precedes_protected_store_calls(self) -> None:
@@ -460,7 +460,7 @@ class NodeControlSigningFamilyTests(unittest.TestCase):
                                                      correlation_id=f"wrong-health-{index}")
                         self.assertEqual(denied.status_code, 403)
                         self.assertEqual(denied.json()["detail"]["code"], "secret-intent-mismatch")
-                        self.assertNotIn("value_base64", denied.json())
+                        self.assertTrue("value_base64" not in denied.json(), "denial exposed material field")
                     decrypt.assert_not_called()
                 with closing(sqlite3.connect(fixture.database_path)) as connection:
                     self.assertEqual(connection.execute(
