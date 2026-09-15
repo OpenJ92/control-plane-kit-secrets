@@ -58,11 +58,13 @@ ALLOWED_SECRET_USE_INTENTS = frozenset(
         "docker.remote-tls.client-key",
         "gateway.probe-signing-key",
         "gateway.node-control-transit-signing-key",
+        "gateway.node-health-read-transit-signing-key",
         "oci.pull-credential",
         "postgres.password",
         "secrets.custody-root-key",
         "secrets.provider-credentials-document",
         "workload.node-control-signing-key",
+        "workload.node-health-read-signing-key",
     }
 )
 

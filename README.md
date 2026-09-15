@@ -18,8 +18,9 @@ fail-closed resolve behavior when audit persistence is unavailable.
 ## Delegation Key Generation
 
 The provider owns a closed set of Ed25519 generation operations for gateway
-probe, gateway node-control transit, and workload node-control delegation. A
-caller supplies only bounded identity and correlation metadata:
+probe, gateway node-control transit, workload node-control, gateway health-read
+transit, and workload health-read delegation. A caller supplies only bounded
+identity and correlation metadata:
 
 ```text
 workspace + SecretReference + admitted purpose + issuer + correlation
@@ -36,6 +37,18 @@ different semantics, substituting an intent, or drifting authenticated family
 metadata fails closed, and a revoked generated reference cannot be replayed
 into service. Compact profile construction and signing remain outside this
 provider.
+
+Health families use exactly these pairs:
+
+| Purpose | Resolution intent |
+| --- | --- |
+| `gateway-node-health-read-transit` | `gateway.node-health-read-transit-signing-key` |
+| `workload-node-health-read` | `workload.node-health-read-signing-key` |
+
+Generation and resolution still require their separate action/workspace/intent
+grants. Existing scoped write/rotate also admit these intent values; wildcard
+grants retain their existing meaning. This provider support does not authorize
+Operations health-key generation or construct/sign health requests.
 
 ## Exact Version Revocation
 

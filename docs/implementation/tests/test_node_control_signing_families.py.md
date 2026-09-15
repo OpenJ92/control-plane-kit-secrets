@@ -7,9 +7,10 @@ Restart/concurrent replay preserves family and public identity. API fixtures sup
 
 Generation response/audit/database-dump checks exclude selected private PEM, while authorized resolution reveals it to the fixture. This is provider custody evidence, not node-control capability execution or live gateway acceptance. See [_delegation_signing.py](../../../src/control_plane_kit_secrets/_delegation_signing.py), [store.py](../../../src/control_plane_kit_secrets/store.py) and [pyproject.toml](../../../pyproject.toml).
 
-SDK #30 supplies the compatible Core/SDK archive pair. These #29 targets precede
-the provider family/allowlist implementation: new health positives are expected
-to fail until that source is admitted. Both health families extend existing
+SDK #30 supplies the compatible Core/SDK archive pair. The #29 targets were committed before
+the provider family/allowlist implementation and demonstrated missing-admission
+red. The same targets govern the subsequent source change; native green remains
+required before completion. Both health families extend existing
 restart, concurrency, metadata-drift and redaction witnesses. Four focused
 methods add scope denial before store calls, cross-family denial before decrypt
 or selection commit, conflicting/revoked replay, and generation audit rollback
