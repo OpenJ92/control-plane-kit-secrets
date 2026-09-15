@@ -18,3 +18,10 @@ Handled failures use fixed outcome/code details. No global scrubber replaces fra
 Resolve appends audit before returning material, but its version-selection transaction may already be committed. Generation and exact-version revocation couple audit and mutation inside the store transaction. Ordinary write/rotate/whole-reference revoke commit before separate audit appends: audit failure does not imply no mutation. Audit coverage differs among route branches, authentication failures and framework rejection paths.
 
 Read [auth.py](../../../../src/control_plane_kit_secrets/auth.py), [store.py](../../../../src/control_plane_kit_secrets/store.py), [audit.py](../../../../src/control_plane_kit_secrets/audit.py) and [server.py](../../../../src/control_plane_kit_secrets/server.py). [test_provider_api.py](../../../../tests/test_provider_api.py) protects local HTTP composition, not external provider acceptance.
+
+#29 appends the two exact health signing intents to the existing closed API
+allowlist. Generation derives each intent from the separate local family map;
+resolve/write/rotate admit it only under their unchanged credential grants.
+No endpoint, request/response schema, wildcard rule, audit or transaction
+behavior changes. Wrong durable intent still requires metadata inspection and
+denial audit but must not decrypt or commit a new resolution selection.

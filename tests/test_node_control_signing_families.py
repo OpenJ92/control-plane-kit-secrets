@@ -8,6 +8,7 @@ import subprocess
 import sys
 import tempfile
 import unittest
+from unittest.mock import patch
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import closing
 from pathlib import Path
@@ -23,13 +24,15 @@ from control_plane_kit_core import (
 )
 from control_plane_kit_core.secrets import SecretUseIntent
 from control_plane_kit_secrets.api import create_app
-from control_plane_kit_secrets.audit import SqliteAuditStore
+from control_plane_kit_secrets.audit import AuditUnavailable, SqliteAuditStore
 from control_plane_kit_secrets.auth import ProviderCredential, ProviderGrant
 from control_plane_kit_secrets.crypto import (
     encode_master_key_for_file,
     load_master_key_file,
 )
-from control_plane_kit_secrets.models import SecretMetadataInvalid, SecretTampered
+from control_plane_kit_secrets.models import (
+    DelegationKeyGenerationConflict, SecretMetadataInvalid, SecretRevoked, SecretTampered,
+)
 from control_plane_kit_secrets import store as store_module
 from control_plane_kit_secrets.store import EncryptedSecretStore
 from control_plane_kit_secrets import control as control_module
@@ -50,6 +53,15 @@ FAMILIES = (
         SecretUseIntent.WORKLOAD_NODE_CONTROL_SIGNING_KEY.value,
     ),
 )
+
+
+HEALTH_FAMILIES = (
+    (DelegationKeyPurpose.GATEWAY_NODE_HEALTH_READ_TRANSIT.value,
+     SecretUseIntent.GATEWAY_NODE_HEALTH_READ_TRANSIT_SIGNING_KEY.value),
+    (DelegationKeyPurpose.WORKLOAD_NODE_HEALTH_READ.value,
+     SecretUseIntent.WORKLOAD_NODE_HEALTH_READ_SIGNING_KEY.value),
+)
+FAMILIES += HEALTH_FAMILIES
 
 
 class NodeControlSigningFamilyTests(unittest.TestCase):
@@ -103,10 +115,16 @@ class NodeControlSigningFamilyTests(unittest.TestCase):
                 ("unknown-purpose", FAMILIES[0][1]),
                 (FAMILIES[1][0], FAMILIES[2][1]),
                 (FAMILIES[2][0], FAMILIES[0][1]),
+                (HEALTH_FAMILIES[0][0], HEALTH_FAMILIES[1][1]),
+                (HEALTH_FAMILIES[1][0], HEALTH_FAMILIES[0][1]),
+                (HEALTH_FAMILIES[0][0], FAMILIES[1][1]),
+                (FAMILIES[2][0], HEALTH_FAMILIES[1][1]),
             )
             for index, (purpose, intent) in enumerate(candidates):
                 with self.subTest(purpose=purpose, intent=intent):
-                    with self.assertRaises(SecretMetadataInvalid) as caught:
+                    with patch.object(fixture.store, "_connection", side_effect=AssertionError(
+                        "invalid family reached custody"
+                    )) as protected, self.assertRaises(SecretMetadataInvalid) as caught:
                         fixture.store.generate_delegation_key(
                             **fixture.arguments(
                                 purpose=purpose,
@@ -116,12 +134,13 @@ class NodeControlSigningFamilyTests(unittest.TestCase):
                             provider_id="provider-a",
                             audit_store=fixture.audit,
                         )
+                    protected.assert_not_called()
                     self.assertIsNone(caught.exception.__cause__)
                     self.assertIsNone(caught.exception.__context__)
             self.assertEqual(fixture.store.raw_rows_for_tests(), [])
             self.assertEqual(fixture.audit.rows_for_tests(), [])
 
-    def test_api_generates_and_resolves_all_three_exact_families(self) -> None:
+    def test_api_generates_and_resolves_all_five_exact_families(self) -> None:
         with _fixture() as fixture:
             for index, (purpose, intent) in enumerate(FAMILIES):
                 with self.subTest(purpose=purpose):
@@ -129,7 +148,7 @@ class NodeControlSigningFamilyTests(unittest.TestCase):
                         purpose=purpose,
                         suffix=f"family-{index}",
                     )
-                    self.assertEqual(generated.status_code, 200, generated.text)
+                    self.assertEqual(generated.status_code, 200, "generation did not succeed")
                     payload = generated.json()
                     self.assertEqual(payload["purpose"], purpose)
                     public_key = DelegationPublicKey(
@@ -147,7 +166,7 @@ class NodeControlSigningFamilyTests(unittest.TestCase):
                         intent=intent,
                         correlation_id=f"resolve-family-{index}",
                     )
-                    self.assertEqual(resolved.status_code, 200, resolved.text)
+                    self.assertEqual(resolved.status_code, 200, "resolution did not succeed")
                     private_key = serialization.load_pem_private_key(
                         base64.b64decode(resolved.json()["value_base64"]),
                         password=None,
@@ -189,118 +208,124 @@ class NodeControlSigningFamilyTests(unittest.TestCase):
             )
 
     def test_restart_replay_preserves_family_and_public_identity(self) -> None:
-        with _fixture() as fixture:
-            arguments = fixture.arguments(
-                purpose=FAMILIES[2][0],
-                intent=FAMILIES[2][1],
-                suffix="restart",
-            )
-            first = fixture.store.generate_delegation_key(
-                **arguments,
-                provider_id="provider-a",
-                audit_store=fixture.audit,
-            )
-            restarted = fixture.restarted_store()
-            replayed = restarted.generate_delegation_key(
-                **arguments,
-                provider_id="provider-a",
-                audit_store=fixture.audit,
-            )
+        for purpose, intent in (FAMILIES[2], *HEALTH_FAMILIES):
+            with self.subTest(purpose=purpose):
+                with _fixture() as fixture:
+                    arguments = fixture.arguments(
+                        purpose=purpose,
+                        intent=intent,
+                        suffix="restart",
+                    )
+                    first = fixture.store.generate_delegation_key(
+                        **arguments,
+                        provider_id="provider-a",
+                        audit_store=fixture.audit,
+                    )
+                    restarted = fixture.restarted_store()
+                    replayed = restarted.generate_delegation_key(
+                        **arguments,
+                        provider_id="provider-a",
+                        audit_store=fixture.audit,
+                    )
 
-            self.assertTrue(replayed.replayed)
-            self.assertEqual(replayed.purpose, FAMILIES[2][0])
-            self.assertEqual(replayed.key_id, first.key_id)
-            self.assertEqual(replayed.public_key_pem, first.public_key_pem)
-            self.assertEqual(
-                [row["intent"] for row in fixture.audit.rows_for_tests()],
-                [FAMILIES[2][1], FAMILIES[2][1]],
-            )
+                    self.assertTrue(replayed.replayed)
+                    self.assertEqual(replayed.purpose, purpose)
+                    self.assertEqual(replayed.key_id, first.key_id)
+                    self.assertEqual(replayed.public_key_pem, first.public_key_pem)
+                    self.assertEqual(
+                        [row["intent"] for row in fixture.audit.rows_for_tests()],
+                        [intent, intent],
+                    )
 
     def test_same_correlation_converges_and_audits_the_admitted_intent(self) -> None:
-        with _fixture() as fixture:
-            arguments = fixture.arguments(
-                purpose=FAMILIES[1][0],
-                intent=FAMILIES[1][1],
-                suffix="concurrent",
-            )
+        for purpose, intent in (FAMILIES[1], *HEALTH_FAMILIES):
+            with self.subTest(purpose=purpose):
+                with _fixture() as fixture:
+                    arguments = fixture.arguments(
+                        purpose=purpose,
+                        intent=intent,
+                        suffix="concurrent",
+                    )
 
-            def generate(_index: int):
-                return fixture.store.generate_delegation_key(
-                    **arguments,
-                    provider_id="provider-a",
-                    audit_store=fixture.audit,
-                )
+                    def generate(_index: int):
+                        return fixture.store.generate_delegation_key(
+                            **arguments,
+                            provider_id="provider-a",
+                            audit_store=fixture.audit,
+                        )
 
-            with ThreadPoolExecutor(max_workers=4) as executor:
-                generated = tuple(executor.map(generate, range(4)))
+                    with ThreadPoolExecutor(max_workers=4) as executor:
+                        generated = tuple(executor.map(generate, range(4)))
 
-            self.assertEqual({item.key_id for item in generated}, {generated[0].key_id})
-            self.assertEqual(sum(not item.replayed for item in generated), 1)
-            self.assertEqual(len(fixture.store.raw_rows_for_tests()), 1)
-            self.assertEqual(
-                {row["intent"] for row in fixture.audit.rows_for_tests()},
-                {FAMILIES[1][1]},
-            )
+                    self.assertEqual({item.key_id for item in generated}, {generated[0].key_id})
+                    self.assertEqual(sum(not item.replayed for item in generated), 1)
+                    self.assertEqual(len(fixture.store.raw_rows_for_tests()), 1)
+                    self.assertEqual(
+                        {row["intent"] for row in fixture.audit.rows_for_tests()},
+                        {intent},
+                    )
 
     def test_replay_rejects_generation_row_and_authenticated_family_drift(
         self,
     ) -> None:
-        for corrupted_labels in (False, True):
-            with self.subTest(corrupted_labels=corrupted_labels), _fixture() as fixture:
-                original = fixture.arguments(
-                    purpose=FAMILIES[1][0],
-                    intent=FAMILIES[1][1],
-                    suffix="drift",
-                )
-                fixture.store.generate_delegation_key(
-                    **original,
-                    provider_id="provider-a",
-                    audit_store=fixture.audit,
-                )
-                with closing(sqlite3.connect(fixture.database_path)) as connection:
-                    with connection:
-                        if corrupted_labels:
-                            connection.execute(
-                                """
-                                UPDATE secret_versions
-                                SET labels_json = ?
-                                WHERE workspace_id = ? AND secret_id = ?
-                                """,
-                                (
-                                    "{",
-                                    original["workspace_id"],
-                                    original["secret_id"],
-                                ),
-                            )
-                        else:
-                            connection.execute(
-                                """
-                                UPDATE delegation_key_generations
-                                SET purpose = ?
-                                WHERE workspace_id = ? AND correlation_id = ?
-                                """,
-                                (
-                                    FAMILIES[2][0],
-                                    original["workspace_id"],
-                                    original["correlation_id"],
-                                ),
-                            )
+        for purpose, intent in (FAMILIES[1], *HEALTH_FAMILIES):
+            with self.subTest(purpose=purpose):
+                for corrupted_labels in (False, True):
+                    with self.subTest(corrupted_labels=corrupted_labels), _fixture() as fixture:
+                        original = fixture.arguments(
+                            purpose=purpose,
+                            intent=intent,
+                            suffix="drift",
+                        )
+                        fixture.store.generate_delegation_key(
+                            **original,
+                            provider_id="provider-a",
+                            audit_store=fixture.audit,
+                        )
+                        with closing(sqlite3.connect(fixture.database_path)) as connection:
+                            with connection:
+                                if corrupted_labels:
+                                    connection.execute(
+                                        """
+                                        UPDATE secret_versions
+                                        SET labels_json = ?
+                                        WHERE workspace_id = ? AND secret_id = ?
+                                        """,
+                                        (
+                                            "{",
+                                            original["workspace_id"],
+                                            original["secret_id"],
+                                        ),
+                                    )
+                                else:
+                                    connection.execute(
+                                        """
+                                        UPDATE delegation_key_generations
+                                        SET purpose = ?
+                                        WHERE workspace_id = ? AND correlation_id = ?
+                                        """,
+                                        (
+                                            FAMILIES[2][0],
+                                            original["workspace_id"],
+                                            original["correlation_id"],
+                                        ),
+                                    )
 
-                replay = original
-                if not corrupted_labels:
-                    replay = {
-                        **original,
-                        "purpose": FAMILIES[2][0],
-                        "intent": FAMILIES[2][1],
-                    }
-                with self.assertRaises(SecretTampered) as caught:
-                    fixture.store.generate_delegation_key(
-                        **replay,
-                        provider_id="provider-a",
-                        audit_store=fixture.audit,
-                    )
-                self.assertIsNone(caught.exception.__cause__)
-                self.assertIsNone(caught.exception.__context__)
+                        replay = original
+                        if not corrupted_labels:
+                            replay = {
+                                **original,
+                                "purpose": FAMILIES[2][0],
+                                "intent": FAMILIES[2][1],
+                            }
+                        with self.assertRaises(SecretTampered) as caught:
+                            fixture.store.generate_delegation_key(
+                                **replay,
+                                provider_id="provider-a",
+                                audit_store=fixture.audit,
+                            )
+                        self.assertIsNone(caught.exception.__cause__)
+                        self.assertIsNone(caught.exception.__context__)
 
     def test_replay_bounds_persisted_public_identity_before_crypto(self) -> None:
         self.assertEqual(store_module.MAX_DELEGATION_PUBLIC_KEY_PEM_CHARS, 8192)
@@ -374,30 +399,116 @@ class NodeControlSigningFamilyTests(unittest.TestCase):
     def test_generation_response_audit_and_plaintext_rows_exclude_private_material(
         self,
     ) -> None:
-        with _fixture() as fixture:
-            generated = fixture.generate_api(
-                purpose=FAMILIES[2][0],
-                suffix="redaction",
-            )
-            self.assertEqual(generated.status_code, 200, generated.text)
-            resolved = fixture.resolve_api(
-                secret_id="key-redaction",
-                intent=FAMILIES[2][1],
-                correlation_id="resolve-redaction",
-            )
-            self.assertEqual(resolved.status_code, 200, resolved.text)
-            private_pem = base64.b64decode(resolved.json()["value_base64"])
+        for purpose, intent in (FAMILIES[2], *HEALTH_FAMILIES):
+            with self.subTest(purpose=purpose):
+                with _fixture() as fixture:
+                    generated = fixture.generate_api(
+                        purpose=purpose,
+                        suffix="redaction",
+                    )
+                    self.assertEqual(generated.status_code, 200, "generation did not succeed")
+                    resolved = fixture.resolve_api(
+                        secret_id="key-redaction",
+                        intent=intent,
+                        correlation_id="resolve-redaction",
+                    )
+                    self.assertEqual(resolved.status_code, 200, "resolution did not succeed")
+                    private_pem = base64.b64decode(resolved.json()["value_base64"])
 
-            with closing(sqlite3.connect(fixture.database_path)) as connection:
-                database_dump = "\n".join(connection.iterdump())
-            evidence = generated.text + repr(fixture.audit.rows_for_tests()) + database_dump
-            self.assertNotIn("BEGIN PRIVATE KEY", evidence)
-            self.assertNotIn(private_pem.decode("ascii"), evidence)
-            self.assertNotIn("value_base64", generated.text)
+                    with closing(sqlite3.connect(fixture.database_path)) as connection:
+                        database_dump = "\n".join(connection.iterdump())
+                    evidence = generated.text + repr(fixture.audit.rows_for_tests()) + database_dump
+                    self.assertTrue("BEGIN PRIVATE KEY" not in evidence, "private material marker leaked")
+                    self.assertTrue(private_pem.decode("ascii") not in evidence, "private material leaked")
+                    self.assertTrue("value_base64" not in generated.text, "generation exposed material field")
+
+
+    def test_health_scope_denial_precedes_protected_store_calls(self) -> None:
+        for purpose, intent in HEALTH_FAMILIES:
+            with self.subTest(purpose=purpose), _fixture(
+                allowed_intents=tuple(value for _, value in FAMILIES if value != intent),
+            ) as fixture:
+                with patch.object(fixture.store, "generate_delegation_key", side_effect=AssertionError(
+                    "scope denial reached generation"
+                )) as generate, patch.object(fixture.store, "resolve_secret_for_use", side_effect=AssertionError(
+                    "scope denial reached resolution"
+                )) as resolve:
+                    denied = fixture.generate_api(purpose=purpose, suffix="denied")
+                    self.assertEqual(denied.status_code, 403)
+                    self.assertEqual(denied.json()["detail"]["code"], "insufficient-scope")
+                    denied = fixture.resolve_api(secret_id="key-denied", intent=intent,
+                                                 correlation_id="resolve-denied")
+                    self.assertEqual(denied.status_code, 403)
+                    self.assertEqual(denied.json()["detail"]["code"], "insufficient-scope")
+                    generate.assert_not_called()
+                    resolve.assert_not_called()
+                self.assertEqual(fixture.store.raw_rows_for_tests(), [])
+                self.assertEqual([row["outcome"] for row in fixture.audit.rows_for_tests()],
+                                 ["denied", "denied"])
+
+    def test_health_cross_family_resolution_never_decrypts_or_selects(self) -> None:
+        for purpose, intent in HEALTH_FAMILIES:
+            with self.subTest(purpose=purpose), _fixture() as fixture:
+                self.assertEqual(fixture.generate_api(purpose=purpose, suffix="health").status_code, 200)
+                with patch.object(fixture.store, "_decrypt_row", side_effect=AssertionError(
+                    "wrong family reached decryption"
+                )) as decrypt:
+                    for index, (_, wrong_intent) in enumerate(FAMILIES):
+                        if wrong_intent == intent:
+                            continue
+                        denied = fixture.resolve_api(secret_id="key-health", intent=wrong_intent,
+                                                     correlation_id=f"wrong-health-{index}")
+                        self.assertEqual(denied.status_code, 403)
+                        self.assertEqual(denied.json()["detail"]["code"], "secret-intent-mismatch")
+                        self.assertTrue("value_base64" not in denied.json(), "denial exposed material field")
+                    decrypt.assert_not_called()
+                with closing(sqlite3.connect(fixture.database_path)) as connection:
+                    self.assertEqual(connection.execute(
+                        "SELECT count(*) FROM secret_resolution_selections"
+                    ).fetchone()[0], 0)
+                self.assertEqual([row["outcome"] for row in fixture.audit.rows_for_tests()],
+                                 ["generated", *(["denied"] * 4)])
+                self.assertEqual(fixture.resolve_api(secret_id="key-health", intent=intent,
+                                                    correlation_id="right-health").status_code, 200)
+
+    def test_health_generation_conflicts_and_revoked_replay_refuse(self) -> None:
+        for purpose, intent in HEALTH_FAMILIES:
+            with self.subTest(purpose=purpose), _fixture() as fixture:
+                arguments = fixture.arguments(purpose=purpose, intent=intent, suffix="replay")
+                fixture.store.generate_delegation_key(**arguments, provider_id="provider-a",
+                                                     audit_store=fixture.audit)
+                for changes in ({"caller_subject": "other-caller"},
+                                {"purpose": FAMILIES[0][0], "intent": FAMILIES[0][1]}):
+                    with self.assertRaises(DelegationKeyGenerationConflict):
+                        fixture.store.generate_delegation_key(**{**arguments, **changes},
+                            provider_id="provider-a", audit_store=fixture.audit)
+                self.assertEqual(len(fixture.store.raw_rows_for_tests()), 1)
+                self.assertEqual([row["outcome"] for row in fixture.audit.rows_for_tests()], ["generated"])
+                fixture.store.revoke_secret(workspace_id="workspace-1", secret_id="key-replay")
+                with self.assertRaises(SecretRevoked):
+                    fixture.store.generate_delegation_key(**arguments, provider_id="provider-a",
+                                                         audit_store=fixture.audit)
+
+    def test_health_generation_audit_failure_rolls_back_custody_and_correlation(self) -> None:
+        for purpose, intent in HEALTH_FAMILIES:
+            with self.subTest(purpose=purpose), _fixture() as fixture:
+                with patch.object(fixture.audit, "append_in_transaction", side_effect=AuditUnavailable):
+                    failed = fixture.generate_api(purpose=purpose, suffix="atomic")
+                self.assertEqual(failed.status_code, 503)
+                self.assertEqual(failed.json()["detail"]["code"], "audit-unavailable")
+                self.assertEqual(fixture.store.raw_rows_for_tests(), [])
+                self.assertEqual(fixture.audit.rows_for_tests(), [])
+                with closing(sqlite3.connect(fixture.database_path)) as connection:
+                    self.assertEqual(connection.execute(
+                        "SELECT count(*) FROM delegation_key_generations"
+                    ).fetchone()[0], 0)
+                retry = fixture.generate_api(purpose=purpose, suffix="atomic")
+                self.assertEqual(retry.status_code, 200)
+                self.assertEqual([row["outcome"] for row in fixture.audit.rows_for_tests()], ["generated"])
 
 
 class _Fixture:
-    def __init__(self) -> None:
+    def __init__(self, *, allowed_intents: tuple[str, ...] | None = None) -> None:
         self._directory = tempfile.TemporaryDirectory()
         self.base = Path(self._directory.name)
         key_path = self.base / "master.key"
@@ -414,7 +525,8 @@ class _Fixture:
         self.store.initialize()
         self.audit = SqliteAuditStore(self.database_path)
         self.audit.initialize()
-        intents = tuple(intent for _purpose, intent in FAMILIES)
+        intents = (tuple(intent for _purpose, intent in FAMILIES)
+                   if allowed_intents is None else allowed_intents)
         self.client = TestClient(
             create_app(
                 control=ControlAuthority().configuration(control_module),
@@ -506,8 +618,8 @@ class _Fixture:
         return store
 
 
-def _fixture() -> _Fixture:
-    return _Fixture()
+def _fixture(*, allowed_intents: tuple[str, ...] | None = None) -> _Fixture:
+    return _Fixture(allowed_intents=allowed_intents)
 
 
 if __name__ == "__main__":

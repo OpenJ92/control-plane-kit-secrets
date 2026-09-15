@@ -18,6 +18,10 @@ _DELEGATION_SIGNING_INTENTS: Mapping[str, str] = MappingProxyType(
             "gateway.node-control-transit-signing-key"
         ),
         "workload-node-control": "workload.node-control-signing-key",
+        "gateway-node-health-read-transit": (
+            "gateway.node-health-read-transit-signing-key"
+        ),
+        "workload-node-health-read": "workload.node-health-read-signing-key",
     }
 )
 
