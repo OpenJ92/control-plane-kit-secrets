@@ -207,8 +207,8 @@ interpreter behavior.
 ## Validation
 
 The runtime dependency profile explicitly installs Core
-`b79a02d1ac8ef987dd34abeb2297a231b109f7a6` and server SDK `[fastapi]`
-`2c5b588237fbe289c965029b4bc2f072715c42f3` from commit archives. The shared profile
+`e074bda49fa0c46f420d675e45a93f787b460c02` and server SDK `[fastapi]`
+`d8b72e52c8ebca65bf21a2a2ae51df663b1c8a77` from commit archives. The shared profile
 uses cryptography 50.0.0, PyJWT 2.13.0, FastAPI 0.141.1 and Starlette 1.6.0.
 Core is now an explicit runtime dependency; the prior test-only Core pin has
 been removed. Direct Core imports are confined to the public protocol owner
