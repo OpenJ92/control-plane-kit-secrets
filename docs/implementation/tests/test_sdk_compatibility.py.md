@@ -13,10 +13,16 @@ For #29, exact archive expectations advance together to accepted Core
 The three existing provenance/composition tests and framework version assertions
 are unchanged; this is the prerequisite for collecting the new health intents.
 
-For #33, current archive expectations advance together to Core
+For #33, archive expectations advanced together to Core
 `e074bda49fa0c46f420d675e45a93f787b460c02` and reviewed SDK #34 merge
 `d8b72e52c8ebca65bf21a2a2ae51df663b1c8a77`. Only the two URL constants
 change; declared requirements, installed archive/subdirectory checks, framework
 versions, real receiving composition and denial assertions remain unchanged.
 There are no coordinate replacement needles in this suite. Compatibility must
 be established by the unchanged owner gate, not inferred from these constants.
+
+For #35, the same two URL constants select Core
+`f1e6cf2420bf2ec381aab745f462d4e64baef5fc` and the actual reviewed SDK #37
+merge `22f1267bde5015efe2fea4f07be4ce8ddf83bc0c`. All declaration,
+installed-provenance, real SDK receiver and denial assertions remain unchanged.
+This is dependency compatibility evidence, not image or live qualification.

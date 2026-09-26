@@ -14,8 +14,8 @@ authors = [
 ]
 dependencies = [
   "cryptography==50.0.0",
-  "control-plane-kit-core @ https://github.com/OpenJ92/control-plane-kit/archive/e074bda49fa0c46f420d675e45a93f787b460c02.zip#subdirectory=control-plane-kit-core",
-  "control-plane-kit-server-sdk[fastapi] @ https://github.com/OpenJ92/control-plane-kit-server-sdk/archive/d8b72e52c8ebca65bf21a2a2ae51df663b1c8a77.zip",
+  "control-plane-kit-core @ https://github.com/OpenJ92/control-plane-kit/archive/f1e6cf2420bf2ec381aab745f462d4e64baef5fc.zip#subdirectory=control-plane-kit-core",
+  "control-plane-kit-server-sdk[fastapi] @ https://github.com/OpenJ92/control-plane-kit-server-sdk/archive/22f1267bde5015efe2fea4f07be4ce8ddf83bc0c.zip",
 ]
 
 [project.optional-dependencies]
