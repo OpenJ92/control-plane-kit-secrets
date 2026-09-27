@@ -26,3 +26,10 @@ For #35, the same two URL constants select Core
 merge `22f1267bde5015efe2fea4f07be4ce8ddf83bc0c`. All declaration,
 installed-provenance, real SDK receiver and denial assertions remain unchanged.
 This is dependency compatibility evidence, not image or live qualification.
+
+For #37, the two expected archive URLs advance to Core79c1a8b and accepted
+SDK06e9346, matching production metadata and the SDK's own Core requirement.
+All declaration, installed provenance, framework-version, composition and
+negative assertions remain unchanged. The test still exercises the existing
+explicit provider route installation; it does not claim automatic wrapper
+configuration delivery, which remains downstream Servers237 work.

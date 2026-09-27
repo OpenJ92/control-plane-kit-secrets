@@ -1,7 +1,7 @@
 Source: [pyproject.toml](../../pyproject.toml).
 Maintain this document alongside its source file. When the source or relevant imported contracts change, verify and update this companion in the same change.
 
-This package metadata selects setuptools discovery under src, Python >=3.11, and includes the py.typed marker. Runtime dependencies explicitly select Coref1e6cf2420bf2ec381aab745f462d4e64baef5fc from its commit archive/core subdirectory, SDK[fastapi]22f1267bde5015efe2fea4f07be4ce8ddf83bc0c from its commit archive, and cryptography50.0.0. The selected SDK extra requires FastAPI0.141.1, Starlette1.6.0 and PyJWT2.13.0 with the same crypto version. This is an exact compatibility profile for those packages, not a complete transitive lockfile.
+This package metadata selects setuptools discovery under src, Python >=3.11, and includes the py.typed marker. Runtime dependencies explicitly select Core79c1a8bfe049ab17604466da00d43a1258ae33f9 from its commit archive/core subdirectory, SDK[fastapi]06e9346d7257ce29dcfebc74ddcb4c11e6525cb5 from its commit archive, and cryptography50.0.0. The selected SDK extra requires FastAPI0.141.1, Starlette1.6.0 and PyJWT2.13.0 with the same crypto version. This is an exact compatibility profile for those packages, not a complete transitive lockfile.
 
 The test extra retains HTTPX>=0.28 and Uvicorn>=0.35; the old test-only Core dependency is removed. Installing Core does not broadly authorize source ownership or expand signing families. The required receiver uses one explicit protocol-only Core allowance in control.py; other source owners remain Core-free. [test_sdk_compatibility.py](../../tests/test_sdk_compatibility.py) checks declarations, installed archive provenance and framework/crypto versions, plus actual production-factory SDK composition with synthetic authority. Coordinate adoption with [test_node_control_signing_families.py](../../tests/test_node_control_signing_families.py), [Dockerfile.test](../../Dockerfile.test) and package import policy. There is no console-script entrypoint declared here.
 
@@ -23,3 +23,14 @@ outside Secrets' consumed public control/health/key protocol. SDK functional
 source is unchanged. The exact Core URL matches SDK's selection, preserving
 normal resolver behavior. Existing declaration/provenance/receiving tests and
 the ordinary owner gate govern this adoption; no new custody behavior follows.
+
+#37 selects accepted Core79c1a8bfe049ab17604466da00d43a1258ae33f9 and
+SDK06e9346d7257ce29dcfebc74ddcb4c11e6525cb5 together. The Core archive URL
+matches the SDK requirement exactly. SDK adds common wrapper setup while
+preserving the explicit installer, dispatcher and verifier APIs consumed by
+this provider. The existing provider configuration, custody and route owners
+remain unchanged; adopting dependencies does not migrate this provider to the
+new wrapper setup. Existing provenance and real receiving composition tests
+plus the ordinary owner gate establish compatibility. This resolves the
+concrete transitive pin conflict for Servers237 and Interpreters171 without
+installation overrides or new security/authority behavior.
