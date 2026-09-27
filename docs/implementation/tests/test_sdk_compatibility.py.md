@@ -33,3 +33,9 @@ All declaration, installed provenance, framework-version, composition and
 negative assertions remain unchanged. The test still exercises the existing
 explicit provider route installation; it does not claim automatic wrapper
 configuration delivery, which remains downstream Servers237 work.
+
+For #39, only the two archive URL constants advance to accepted Core6b2d173 and
+SDK e19b7ed. Declaration and installed direct_url checks, framework versions,
+actual production-factory receiving composition and all denial/audit assertions
+remain intact. The SDK runtime diff from the preceding selection is empty;
+the normal Docker gate still supplies the installation and compatibility proof.
