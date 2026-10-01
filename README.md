@@ -114,13 +114,15 @@ a valid file with empty development JSON selects the file; an empty file setting
 with nonempty development JSON rejects. Both nonempty or both absent/empty reject.
 
 Startup requires the explicit absolute path in
-`CPK_SECRETS_CONTROL_CONFIGURATION_FILE`. This separate public JSON input uses
-profile `secrets-control-configuration.v1` and contains target/runtime identity,
-the exact V2 liveness declaration on socket `control`, and separate static/health
-issuer and public-verifier-key snapshots. The byte ceiling is 64 KiB; the path
+`CPK_WRAPPER_CONFIGURATION_FILE`. This separate public JSON input uses the Core
+`ReceiverNodeControlConfiguration` profile `workload-node-control-configuration.v2`:
+workspace/runtime/node/socket/receiver identity, the exact V2 liveness declaration
+on socket `control`, and separate surface/health issuer and public-key families.
+Graph authority stays in each signed request. The byte ceiling is 64 KiB; the path
 ceiling is 4096 UTF-8 bytes. No default or disable fallback is provided. The
 public reader checks the opened regular file, uses no-follow/nonblocking flags,
-and permits public read-only modes such as0444. Trusted parent-path integrity
+requires mode0444 and unchanged opened-file metadata across the read. The old
+Secrets setting and configuration profile are not fallbacks. Trusted parent-path integrity
 and authorized delivery remain the caller's responsibility.
 
 The complete ordinary FastAPI host and actual SDK routes are admitted before
@@ -132,10 +134,12 @@ exits with `secret provider configuration is invalid`. These public and private
 loaders remain separate, with their own fixed outward errors.
 
 Standalone launchers supply their trusted absolute public path. Server product
-adoption belongs to Servers #189, which supplies the canonical public artifact
-at `/etc/cpk/secrets-server/control.json` and its path environment while retaining
-the provider's private inputs, data lifecycle and control port8081/UID10006.
-This package provides the public codec/encoder, not a product artifact factory.
+adoption belongs to Servers #237 and must deliver the shared artifact and common
+path environment while retaining private inputs, data lifecycle and port/UID policy.
+This package enforces the Secrets declaration over the shared Core codec; it is
+not a product artifact factory. The actual SDK wrapper supplies protected surface
+reads (V2 requests/grants, V3 results) and V2 liveness. No readiness, variables,
+commands or private-provider permissions are granted by this configuration.
 
 The provider then admits custody under one explicit SQLite transaction. Fresh or
 positively object-free storage receives the complete custody/audit schema and one

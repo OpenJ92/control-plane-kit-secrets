@@ -7,6 +7,7 @@ from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 
 import control_plane_kit_core as core
+from control_plane_kit_core.wrapper_configuration import NodeControlVerificationConfiguration
 from control_plane_kit_server_sdk.verifier_keys import (
     WorkloadNodeControlSurfaceReadVerifierKeySet,
     WorkloadNodeHealthReadVerifierKeySet,
@@ -16,13 +17,14 @@ from control_plane_kit_server_sdk.verifier_keys import (
 class ControlAuthority:
     def __init__(self, suffix="a"):
         roles = core.NodeControlGraphReferenceRole
-        self.target = core.NodeControlTarget(
-            core.NodeControlGraphReference(roles.WORKSPACE, f"workspace-{suffix}"),
-            core.NodeControlGraphReference(roles.GRAPH_REVISION, f"revision-{suffix}"),
-            core.NodeControlGraphReference(roles.NODE, f"provider-{suffix}"),
-            core.NodeControlGraphReference(roles.PROVIDER_SOCKET, "control"),
-        )
         self.runtime = core.NodeControlGraphReference(roles.RUNTIME, f"runtime-{suffix}")
+        self.target = core.NodeControlReceiverTarget(
+            core.NodeControlGraphReference(roles.WORKSPACE, f"workspace-{suffix}"),
+            self.runtime,
+            core.NodeControlGraphReference(roles.NODE, f"provider-{suffix}"),
+            core.NodeControlGraphReference(roles.PROVIDER_SOCKET, "control"), "a" * 32,
+        )
+        self.context = core.NodeControlAuthorityContext(f"revision-{suffix}", f"projection-{suffix}")
         self.declaration = core.WorkloadNodeControlSurfaceDeclaration(
             core.WorkloadNodeControlSurfaceDescriptor(
                 self.target.provider_socket_name, (), health_reads=(core.NodeHealthReadKind.LIVENESS,),
@@ -51,23 +53,24 @@ class ControlAuthority:
         return private, public
 
     def configuration(self, receiver):
-        return receiver.SecretsControlConfiguration(
-            target=self.target, runtime_id=self.runtime, declaration=self.declaration,
-            surface_issuer=self.surface_issuer, surface_keys=self.surface_keys,
-            health_issuer=self.health_issuer, health_keys=self.health_keys,
-        )
+        return core.ReceiverNodeControlConfiguration(self.target, self.declaration, (
+            NodeControlVerificationConfiguration(self.surface_keys.purpose,
+                self.surface_issuer, self.surface_keys.public_keys),
+            NodeControlVerificationConfiguration(self.health_keys.purpose,
+                self.health_issuer, self.health_keys.public_keys),
+        ))
 
     def document(self):
         def family(issuer, keys):
-            return {"issuer": issuer, "public_keys": [
+            return {"purpose": keys.purpose.value, "issuer": issuer, "public_keys": [
                 {"key_id": key.key_id, "algorithm": key.algorithm.value,
                  "public_key_pem": key.public_key_pem} for key in keys.public_keys
             ]}
         return {
-            "profile": "secrets-control-configuration.v1", "target": self.target.descriptor(),
-            "runtime_id": self.runtime.value, "declaration": self.declaration.descriptor(),
-            "surface_read": family(self.surface_issuer, self.surface_keys),
-            "health_read": family(self.health_issuer, self.health_keys),
+            "profile": "workload-node-control-configuration.v2", "target": self.target.descriptor(),
+            "declaration": self.declaration.descriptor(),
+            "verifiers": [family(self.surface_issuer, self.surface_keys),
+                          family(self.health_issuer, self.health_keys)],
         }
 
     def encoded(self):
@@ -75,22 +78,22 @@ class ControlAuthority:
 
     def signed_read(self, *, static=False, kind=None, issued_at=100, lifetime=100, changes=None):
         if static:
-            request = core.NodeControlSurfaceReadRequest(
-                self.target, kind or core.NodeControlSurfaceReadKind.CAPABILITIES,
+            request = core.ReceiverControlSurfaceReadRequest(
+                self.target, self.context, kind or core.NodeControlSurfaceReadKind.CAPABILITIES,
                 self.declaration.identity(), "surface-request",
             )
-            grant_type = core.DelegatedWorkloadNodeControlSurfaceReadGrant
-            profile = core.DelegatedWorkloadNodeControlSurfaceReadGrantProfile.V1
+            grant_type = core.DelegatedWorkloadReceiverControlSurfaceReadGrant
+            profile = core.DelegatedWorkloadReceiverControlSurfaceReadGrantProfile.V2
             issuer, keys, private = self.surface_issuer, self.surface_keys, self.surface_private
             payload_key = "workload_node_control_surface_read"
             token_type = "CPK-WORKLOAD-NODE-CONTROL-SURFACE-READ+JWT"
         else:
-            request = core.NodeHealthReadRequest(
-                self.target, self.runtime, kind or core.NodeHealthReadKind.LIVENESS,
+            request = core.ReceiverHealthReadRequest(
+                self.target, self.context, kind or core.NodeHealthReadKind.LIVENESS,
                 self.declaration.identity(), "health-request",
             )
-            grant_type = core.DelegatedWorkloadNodeHealthReadGrant
-            profile = core.DelegatedWorkloadNodeHealthReadGrantProfile.V1
+            grant_type = core.DelegatedWorkloadReceiverHealthReadGrant
+            profile = core.DelegatedWorkloadReceiverHealthReadGrantProfile.V2
             issuer, keys, private = self.health_issuer, self.health_keys, self.health_private
             payload_key = "workload_node_health_read"
             token_type = "CPK-WORKLOAD-NODE-HEALTH-READ+JWT"
@@ -98,11 +101,12 @@ class ControlAuthority:
         grant = grant_type(
             profile=profile, canonicalization=core.NodeControlCanonicalization.JCS_RFC8785_V1,
             purpose=keys.purpose, issuer=issuer, key_id=keys.public_keys[0].key_id,
-            audience=core.workload_node_control_audience(self.target), target=request.target,
+            audience=core.receiver_node_control_audience(self.target), target=request.target,
+            authority_context=request.authority_context,
             kind=request.kind, declaration_identity=request.declaration_identity,
             request_id=request.request_id, request_digest=request.canonical_digest(),
             issued_at=issued_at, not_before=issued_at, expires_at=issued_at + lifetime,
-            jti="owner-control-fixture", **({} if static else {"runtime_id": request.runtime_id}),
+            jti="owner-control-fixture",
         )
         token = jwt.encode({
             "iss": issuer, "aud": grant.audience, "iat": issued_at, "nbf": issued_at,

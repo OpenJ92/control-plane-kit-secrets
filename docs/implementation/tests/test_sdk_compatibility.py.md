@@ -39,3 +39,5 @@ SDK e19b7ed. Declaration and installed direct_url checks, framework versions,
 actual production-factory receiving composition and all denial/audit assertions
 remain intact. The SDK runtime diff from the preceding selection is empty;
 the normal Docker gate still supplies the installation and compatibility proof.
+
+#41 updates exact archive expectations to Core1f28 and SDKf40 together. The forwarding observer now wraps actual install_cpk_wrapper, supplies a test liveness observation callback through its public argument, and still invokes the real SDK installer exactly once. This preserves route/schema, callback count and protected auth/result laws; ReceiverAdoptionTests and ControlReceiverTests exercise the unmodified production default liveness separately. No fake verifier/dispatcher is introduced. Result assertions use receiver surfaceV3/healthV2 codecs. Framework/crypto and installed archive/subdirectory assertions remain unchanged.
