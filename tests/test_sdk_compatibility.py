@@ -23,11 +23,11 @@ from control_plane_kit_secrets.custody import admit_provider_custody
 REPO_ROOT = Path(__file__).parents[1]
 CORE_URL = (
     "https://github.com/OpenJ92/control-plane-kit/archive/"
-    "1f28d009069dcdabf44254e6d853815b6e00eda2.zip"
+    "250d65e19dc748ebe840f705be77eb732dab3cb3.zip"
 )
 SDK_URL = (
     "https://github.com/OpenJ92/control-plane-kit-server-sdk/archive/"
-    "f40ff42c9ab625c09f734dccf328013ca2112295.zip"
+    "5dc93b92c27bb9bbe2af027f945a347e5e4131bc.zip"
 )
 
 
