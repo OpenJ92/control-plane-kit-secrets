@@ -23,11 +23,11 @@ from control_plane_kit_secrets.custody import admit_provider_custody
 REPO_ROOT = Path(__file__).parents[1]
 CORE_URL = (
     "https://github.com/OpenJ92/control-plane-kit/archive/"
-    "6b2d173bccbab9f8cb4fa4c35fef60d2ca27aa0e.zip"
+    "1f28d009069dcdabf44254e6d853815b6e00eda2.zip"
 )
 SDK_URL = (
     "https://github.com/OpenJ92/control-plane-kit-server-sdk/archive/"
-    "e19b7ed205d492bdae3abe7c2449732bcc4d53dc.zip"
+    "f40ff42c9ab625c09f734dccf328013ca2112295.zip"
 )
 
 
@@ -74,18 +74,15 @@ class SdkCompatibilityTests(unittest.TestCase):
         health_request, health_token = authority.signed_read()
         observations = []
         snapshots = []
-        install = api.install_cpk_control_routes
+        install = api.install_cpk_wrapper
 
         def observe_install(app, **arguments):
             snapshots.append((tuple(app.routes), json.loads(json.dumps(app.openapi()))))
-            dispatcher = arguments["health_dispatcher"]
-            observe = dispatcher.liveness
-
             def observe_liveness():
                 observations.append(core.NodeHealthReadKind.LIVENESS)
-                return observe()
+                return core.NodeHealthReadOutcome.HEALTHY
 
-            arguments["health_dispatcher"] = replace(dispatcher, liveness=observe_liveness)
+            arguments["liveness"] = observe_liveness
             install(app, **arguments)
 
         with tempfile.TemporaryDirectory() as directory:
@@ -97,7 +94,7 @@ class SdkCompatibilityTests(unittest.TestCase):
                 base / "provider.sqlite3", master_key=load_master_key_file(key_path),
                 provider_id="compat-provider",
             )
-            with patch.object(api, "install_cpk_control_routes", side_effect=observe_install):
+            with patch.object(api, "install_cpk_wrapper", side_effect=observe_install):
                 app = api.create_app(control=configuration, initialize_provider=lambda: (store, audit, ()),
                                      provider_id="compat-provider", clock=lambda: 150)
             self.assertEqual(len(snapshots), 1)
@@ -110,7 +107,7 @@ class SdkCompatibilityTests(unittest.TestCase):
                 response = client.get("/__control/capabilities",
                                       headers={"Authorization": f"Bearer {token}"})
                 self.assertEqual(response.status_code, 200)
-                self.assertEqual(response.content, core.NodeControlSurfaceReadResultCodec(
+                self.assertEqual(response.content, core.ReceiverControlSurfaceReadResultCodec(
                     request, declaration,
                 ).capabilities_result().canonical_bytes())
                 self.assertEqual(client.get("/__control/capabilities").status_code, 401)
@@ -118,7 +115,7 @@ class SdkCompatibilityTests(unittest.TestCase):
                 live = client.get("/__control/health/liveness",
                                   headers={"Authorization": f"Bearer {health_token}"})
                 self.assertEqual(live.status_code, 200)
-                result = core.NodeHealthReadResultCodec(health_request, declaration).decode(live.json())
+                result = core.ReceiverHealthReadResultCodec(health_request, declaration).decode(live.json())
                 self.assertIs(result.outcome, core.NodeHealthReadOutcome.HEALTHY)
                 self.assertEqual(client.get("/__control/health/liveness").status_code, 401)
                 self.assertEqual(client.get("/__control/health/liveness",

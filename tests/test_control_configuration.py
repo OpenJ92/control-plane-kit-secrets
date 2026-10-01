@@ -14,7 +14,7 @@ import control_plane_kit_core as core
 from control_fixtures import ControlAuthority
 
 
-ENVIRONMENT_KEY = "CPK_SECRETS_CONTROL_CONFIGURATION_FILE"
+ENVIRONMENT_KEY = "CPK_WRAPPER_CONFIGURATION_FILE"
 ERROR = "secret provider control configuration is invalid"
 
 
@@ -51,18 +51,18 @@ class ControlConfigurationTests(unittest.TestCase):
         receiver = self.receiver()
         authority = ControlAuthority()
         cases = [b"", b"\xff", b" " * 65537, b"[]", None, authority.encoded().decode()]
-        duplicate = b'{"profile":"secrets-control-configuration.v1",' + authority.encoded()[1:]
+        duplicate = b'{"profile":"workload-node-control-configuration.v2",' + authority.encoded()[1:]
         cases.append(duplicate)
         for mutation in (
             lambda doc: doc.update(extra="private-document-marker"),
             lambda doc: doc.update(profile="unsupported"),
-            lambda doc: doc.update(runtime_id=None),
+            lambda doc: doc["target"].update(runtime_id=None),
             lambda doc: doc["target"].update(provider_socket_name="other"),
-            lambda doc: doc["health_read"].update(private_key_pem="private-key-marker"),
-            lambda doc: doc["surface_read"].update(issuer="bad issuer"),
-            lambda doc: doc["surface_read"].update(public_keys=[]),
-            lambda doc: doc["health_read"].update(public_keys=doc["health_read"]["public_keys"] * 2),
-            lambda doc: doc["health_read"]["public_keys"][0].update(public_key_pem="private-key-marker"),
+            lambda doc: doc["verifiers"][1].update(private_key_pem="private-key-marker"),
+            lambda doc: doc["verifiers"][0].update(issuer="bad issuer"),
+            lambda doc: doc["verifiers"][0].update(public_keys=[]),
+            lambda doc: doc["verifiers"][1].update(public_keys=doc["verifiers"][1]["public_keys"] * 2),
+            lambda doc: doc["verifiers"][1]["public_keys"][0].update(public_key_pem="private-key-marker"),
         ):
             document = authority.document()
             mutation(document)
@@ -80,13 +80,23 @@ class ControlConfigurationTests(unittest.TestCase):
                 authority.target.provider_socket_name, (), health_reads=(core.NodeHealthReadKind.READINESS,),
             ), profile=core.WorkloadNodeControlSurfaceDeclarationProfile.V2,
         )
+        # Nominal role/family validation belongs to Core; Secrets revalidates the
+        # same typed values at its host boundary, including forged dataclasses.
+        from control_plane_kit_core.receiver_identity import ReceiverIdentityError
+        from control_plane_kit_core.wrapper_configuration import WrapperConfigurationError
+        with self.assertRaises(ReceiverIdentityError):
+            replace(authority.target, runtime_id=authority.target.node_id)
+        surface, health = configuration.verifiers
         for changes in (
-            {"runtime_id": authority.target.node_id}, {"health_keys": authority.surface_keys},
-            {"surface_keys": authority.health_keys}, {"declaration": altered},
-            {"health_issuer": ""}, {"target": object()},
+            {"verifiers": (surface, surface)}, {"verifiers": (health, health)},
+            {"target": object()},
         ):
-            with self.subTest(fields=tuple(changes)):
-                self.assert_rejected(receiver, lambda: replace(configuration, **changes))
+            with self.subTest(fields=tuple(changes)), self.assertRaises(WrapperConfigurationError):
+                replace(configuration, **changes)
+        with self.assertRaises(WrapperConfigurationError):
+            replace(health, issuer="")
+        self.assert_rejected(receiver, lambda: receiver.encode_secrets_control_configuration(
+            replace(configuration, declaration=altered)))
         forged = copy.copy(configuration)
         object.__setattr__(forged, "declaration", altered)
         self.assert_rejected(receiver, lambda: receiver.encode_secrets_control_configuration(forged))
@@ -132,6 +142,7 @@ class ControlConfigurationTests(unittest.TestCase):
                     self.assert_rejected(receiver, lambda: receiver.read_secrets_control_configuration(environment))
             public.chmod(0o600)
             public.write_bytes(b" " * 65537)
+            public.chmod(0o444)
             self.assert_rejected(receiver, lambda: receiver.read_secrets_control_configuration(
                 {ENVIRONMENT_KEY: str(public)},
             ))

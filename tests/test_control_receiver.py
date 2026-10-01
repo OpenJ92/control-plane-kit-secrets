@@ -8,6 +8,7 @@ import sys
 import tempfile
 import unittest
 from unittest.mock import patch
+from dataclasses import replace
 
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
@@ -71,7 +72,7 @@ class ControlReceiverTests(unittest.TestCase):
             database = base / "uncreated" / "provider.sqlite3"
             environment = {
                 "CPK_SECRETS_DATABASE_PATH": str(database),
-                "CPK_SECRETS_CONTROL_CONFIGURATION_FILE": str(base / "absent-control"),
+                "CPK_WRAPPER_CONFIGURATION_FILE": str(base / "absent-control"),
                 "CPK_SECRETS_MASTER_KEY_FILE": str(base / "private-key-marker"),
                 "CPK_SECRETS_CREDENTIALS_FILE": str(base / "private-credentials-marker"),
             }
@@ -160,7 +161,7 @@ class ControlReceiverTests(unittest.TestCase):
             request, static = first.signed_read(static=True)
             health_request, health = first.signed_read()
             _, foreign = other.signed_read()
-            _, wrong_runtime = first.signed_read(changes={"runtime_id": other.runtime})
+            _, wrong_runtime = first.signed_read(changes={"target": replace(first.target, runtime_id=other.runtime)})
             _, wrong_target = first.signed_read(changes={"target": other.target})
             _, readiness = first.signed_read(kind=core.NodeHealthReadKind.READINESS)
             with patch.object(ProviderAuthorizer, "authenticate", side_effect=AssertionError("provider auth ran")):
@@ -170,12 +171,12 @@ class ControlReceiverTests(unittest.TestCase):
                             capabilities = client.get("/__control/capabilities",
                                 headers={"Authorization": f"Bearer {static}"})
                             self.assertEqual(capabilities.status_code, 200)
-                            self.assertEqual(capabilities.content, core.NodeControlSurfaceReadResultCodec(
+                            self.assertEqual(capabilities.content, core.ReceiverControlSurfaceReadResultCodec(
                                 request, first.declaration).capabilities_result().canonical_bytes())
                             live = client.get("/__control/health/liveness",
                                 headers={"Authorization": f"Bearer {health}"})
                             self.assertEqual(live.status_code, 200)
-                            self.assertIs(core.NodeHealthReadResultCodec(health_request, first.declaration)
+                            self.assertIs(core.ReceiverHealthReadResultCodec(health_request, first.declaration)
                                           .decode(live.json()).outcome, core.NodeHealthReadOutcome.HEALTHY)
                             for token in (None, static, foreign, wrong_runtime, wrong_target, "provider-token-marker"):
                                 headers = {} if token is None else {"Authorization": f"Bearer {token}"}

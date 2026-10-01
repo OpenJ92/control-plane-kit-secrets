@@ -28,16 +28,16 @@ OLD_PATH = "CPK_SECRETS_CONTROL_CONFIGURATION_FILE"
 class ReceiverAdoptionTests(unittest.TestCase):
     def admitted(self, authority):
         raw = authority.encoded()
-        try:
-            value = control.decode_secrets_control_configuration(raw)
-        except control.SecretsControlConfigurationError:
-            self.fail("Secrets must admit the statically reviewed common receiver V2 document")
-        # At pin adoption move this nominal prerequisite BEFORE the Secrets call.
-        # The independent builder above is immutable across red and green.
+        # Validate the SAME statically reviewed raw builder before Secrets runs.
+        # A failure here invalidates the earlier conditional fixture/red premise.
         from control_plane_kit_core.receiver_configuration import ReceiverNodeControlConfigurationCodec
         codec = ReceiverNodeControlConfigurationCodec()
         expected = codec.decode_bytes(raw)
         self.assertEqual(codec.decode_bytes(codec.encode_bytes(expected)), expected)
+        try:
+            value = control.decode_secrets_control_configuration(raw)
+        except control.SecretsControlConfigurationError:
+            self.fail("Secrets must admit the statically reviewed common receiver V2 document")
         self.assertEqual(value, expected)
         return value
 

@@ -54,7 +54,7 @@ class LiveProviderProcessTests(unittest.TestCase):
                 environment.update({"CPK_SECRETS_DATABASE_PATH": str(db_path),
                                     "CPK_SECRETS_MASTER_KEY_FILE": str(key_path),
                                     "CPK_SECRETS_CREDENTIALS_FILE": str(credentials_path),
-                                    "CPK_SECRETS_CONTROL_CONFIGURATION_FILE": str(public_control),
+                                    "CPK_WRAPPER_CONFIGURATION_FILE": str(public_control),
                                     "CPK_SECRETS_PROVIDER_ID": "private-provider-marker"})
                 if case == "missing-key":
                     key_path.unlink()
@@ -135,7 +135,7 @@ class LiveProviderProcessTests(unittest.TestCase):
                 "CPK_SECRETS_MASTER_KEY_FILE": str(key_path),
                 "CPK_SECRETS_PROVIDER_ID": "provider-live",
                 "CPK_SECRETS_CREDENTIALS_FILE": str(credentials_path),
-                "CPK_SECRETS_CONTROL_CONFIGURATION_FILE": str(public_control),
+                "CPK_WRAPPER_CONFIGURATION_FILE": str(public_control),
             }
 
             process = _start_provider(port=port, environment=environment)
@@ -349,10 +349,10 @@ def _assert_control_reads(test, port, authority, database_path):
         response = _request("GET", port, path, token=token)
         test.assertEqual(response.status_code, 200)
         if static:
-            test.assertEqual(response.content, core.NodeControlSurfaceReadResultCodec(
+            test.assertEqual(response.content, core.ReceiverControlSurfaceReadResultCodec(
                 request, authority.declaration).capabilities_result().canonical_bytes())
         else:
-            result = core.NodeHealthReadResultCodec(request, authority.declaration).decode(response.json())
+            result = core.ReceiverHealthReadResultCodec(request, authority.declaration).decode(response.json())
             test.assertIs(result.outcome, core.NodeHealthReadOutcome.HEALTHY)
     denied = _request("GET", port, "/__control/health/liveness", token=tokens[0])
     test.assertEqual(denied.status_code, 401)

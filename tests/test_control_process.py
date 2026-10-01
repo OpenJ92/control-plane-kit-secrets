@@ -26,12 +26,12 @@ class PublicControlProcessTests(unittest.TestCase):
                     control.write_text("private-document-marker")
                     control.chmod(0o444)
                 environment = {name: value for name, value in os.environ.items()
-                               if not name.startswith("CPK_SECRETS_")}
+                               if not name.startswith("CPK_SECRETS_") and name != "CPK_WRAPPER_CONFIGURATION_FILE"}
                 environment.update({"CPK_SECRETS_DATABASE_PATH": str(database),
                                     "CPK_SECRETS_MASTER_KEY_FILE": str(key),
                                     "CPK_SECRETS_CREDENTIALS_FILE": str(credentials)})
                 if case != "missing-setting":
-                    environment["CPK_SECRETS_CONTROL_CONFIGURATION_FILE"] = str(control)
+                    environment["CPK_WRAPPER_CONFIGURATION_FILE"] = str(control)
                 process = _start_provider(port=_free_port(), environment=environment)
                 exited = False
                 try:
