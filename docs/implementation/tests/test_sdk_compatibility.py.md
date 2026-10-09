@@ -47,3 +47,12 @@ SDK5dc93b9. All declaration, installed provenance, framework/crypto, actual
 receiver composition, denial and audit assertions remain intact. This mechanical
 adoption preserves the existing 99 package tests and needs no artificial red;
 the ordinary Docker gate must prove the new dependency closure.
+
+#45 advances only the two archive constants to Core da17efb and the actual
+accepted SDK47/PR48 merge 447a3c4. All declaration, direct_url archive/subdirectory,
+framework/crypto, actual SDK composition, denial and audit assertions remain
+unchanged. The tests-only commit proves the old selection fails exactly these
+coordinate assertions before metadata adoption; collection and the remaining
+behavioral tests still pass. The unchanged Docker gate must then prove the
+aligned dependency closure. This test does not establish provider deployment
+or interpreter replacement/cleanup behavior.
