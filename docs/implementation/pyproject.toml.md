@@ -1,7 +1,19 @@
 Source: [pyproject.toml](../../pyproject.toml).
 Maintain this document alongside its source file. When the source or relevant imported contracts change, verify and update this companion in the same change.
 
-This package metadata selects setuptools discovery under src, Python >=3.11, and includes the py.typed marker. Runtime dependencies explicitly select Core ba0bd45e7fa7673b837366f7f5da5f9159b0dee8 from its commit archive/core subdirectory, SDK[fastapi] 23500b1445dc6a748bd92a441e781d7f9ed90299 from its commit archive, and cryptography50.0.0. The selected SDK extra requires FastAPI0.141.1, Starlette1.6.0 and PyJWT2.13.0 with the same crypto version. This is an exact compatibility profile for those packages, not a complete transitive lockfile.
+This package metadata selects setuptools discovery under src, Python >=3.11, and includes the py.typed marker. Runtime dependencies explicitly select Core a3f212063b0eb83f08599fc729c05c473aa5a1ef from its commit archive/core subdirectory, SDK[fastapi] f1bc730a7b244d7a713eb4a6531a5fb5fb76eee0 from its commit archive, and cryptography50.0.0. The selected SDK extra requires FastAPI0.141.1, Starlette1.6.0 and PyJWT2.13.0 with the same crypto version. This is an exact compatibility profile for those packages, not a complete transitive lockfile.
+
+Servers #237's declared-slot alignment adopts the actual accepted Core #1969
+and SDK #50 merges together. Core adds only a structural declared-slot selector
+and root export since the prior `ba0bd45e` selection. Its strict actual V2 codec
+and Secrets-consumed receiver contracts are unchanged. SDK production source,
+extras and gate are unchanged from `23500b1`; its exact Core archive matches
+this package. Existing declared/installed provenance and real receiver tests
+govern normal resolution through the unchanged owning Docker gate. No custody,
+schema, authorization, signing, route or provider behavior changes. Acceptance
+supplies the Secrets coordinate for Interpreters, then existing Servers PR #248;
+it does not complete #237 runtime or grandparent/live acceptance. Earlier
+checkpoint coordinates below remain historical provenance.
 
 The test extra retains HTTPX>=0.28 and Uvicorn>=0.35; the old test-only Core dependency is removed. Installing Core does not broadly authorize source ownership or expand signing families. The required receiver uses one explicit protocol-only Core allowance in control.py; other source owners remain Core-free. [test_sdk_compatibility.py](../../tests/test_sdk_compatibility.py) checks declarations, installed archive provenance and framework/crypto versions, plus actual production-factory SDK composition with synthetic authority. Coordinate adoption with [test_node_control_signing_families.py](../../tests/test_node_control_signing_families.py), [Dockerfile.test](../../Dockerfile.test) and package import policy. There is no console-script entrypoint declared here.
 
