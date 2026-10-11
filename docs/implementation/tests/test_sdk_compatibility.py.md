@@ -56,3 +56,12 @@ coordinate assertions before metadata adoption; collection and the remaining
 behavioral tests still pass. The unchanged Docker gate must then prove the
 aligned dependency closure. This test does not establish provider deployment
 or interpreter replacement/cleanup behavior.
+
+Servers #237's alignment checkpoint changes only the two archive constants to
+accepted C* `ba0bd45e7fa7673b837366f7f5da5f9159b0dee8` and SDK49 merge
+`23500b1445dc6a748bd92a441e781d7f9ed90299`. All declaration, actual installed
+archive/subdirectory, framework-version, production-factory receiver, denial
+and audit assertions remain intact. This mechanical pin-only update introduces
+no behavior requiring an artificial red test; the unchanged owner gate proves
+normal dependency resolution and compatibility without an override. No provider
+truth or broader #237 completion is inferred from package acceptance.
