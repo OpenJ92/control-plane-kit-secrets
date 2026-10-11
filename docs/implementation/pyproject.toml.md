@@ -1,7 +1,7 @@
 Source: [pyproject.toml](../../pyproject.toml).
 Maintain this document alongside its source file. When the source or relevant imported contracts change, verify and update this companion in the same change.
 
-This package metadata selects setuptools discovery under src, Python >=3.11, and includes the py.typed marker. Runtime dependencies explicitly select Core da17efb1303ed2176374548dd998d19a655055bf from its commit archive/core subdirectory, SDK[fastapi] 447a3c4c5a20b5c56402c813f6cfde1685eefda0 from its commit archive, and cryptography50.0.0. The selected SDK extra requires FastAPI0.141.1, Starlette1.6.0 and PyJWT2.13.0 with the same crypto version. This is an exact compatibility profile for those packages, not a complete transitive lockfile.
+This package metadata selects setuptools discovery under src, Python >=3.11, and includes the py.typed marker. Runtime dependencies explicitly select Core ba0bd45e7fa7673b837366f7f5da5f9159b0dee8 from its commit archive/core subdirectory, SDK[fastapi] 23500b1445dc6a748bd92a441e781d7f9ed90299 from its commit archive, and cryptography50.0.0. The selected SDK extra requires FastAPI0.141.1, Starlette1.6.0 and PyJWT2.13.0 with the same crypto version. This is an exact compatibility profile for those packages, not a complete transitive lockfile.
 
 The test extra retains HTTPX>=0.28 and Uvicorn>=0.35; the old test-only Core dependency is removed. Installing Core does not broadly authorize source ownership or expand signing families. The required receiver uses one explicit protocol-only Core allowance in control.py; other source owners remain Core-free. [test_sdk_compatibility.py](../../tests/test_sdk_compatibility.py) checks declarations, installed archive provenance and framework/crypto versions, plus actual production-factory SDK composition with synthetic authority. Coordinate adoption with [test_node_control_signing_families.py](../../tests/test_node_control_signing_families.py), [Dockerfile.test](../../Dockerfile.test) and package import policy. There is no console-script entrypoint declared here.
 
@@ -65,3 +65,17 @@ through the unchanged Docker gate. Custody, authorization, persistence, routes,
 framework versions and test extras remain unchanged. The accepted Secrets merge
 will supply the dependency for Interpreters180; package acceptance is separate
 from replacement, cleanup, image publication and live deployment.
+
+Servers #237's bounded alignment checkpoint selects accepted common Core
+`ba0bd45e7fa7673b837366f7f5da5f9159b0dee8` and SDK49's accepted merge
+`23500b1445dc6a748bd92a441e781d7f9ed90299`. The SDK has no production source
+change from the preceding `447a3c4` selection and declares this same exact Core
+archive. Core adds managed-update planning and shared routes/installation
+receipts; the receiver, wrapper, health and key definitions consumed by Secrets
+are unchanged. The existing installed `direct_url.json` and real receiver
+composition assertions remain the proof obligations. No generated-coordinate
+manifest exists in this repository; metadata and the two expected archive URLs
+are its current dependency owners. Custody, schema, auth, routes, framework
+versions, test extras and the owning gate are unchanged. Acceptance provides
+Secrets* for Interpreters #186; it does not close full Servers #237 or establish
+receipt production, provider deployment or live acceptance.
