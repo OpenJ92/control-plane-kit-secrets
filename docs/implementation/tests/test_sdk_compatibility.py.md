@@ -3,9 +3,9 @@ Maintain this document alongside its source file. When the source or relevant im
 
 Three tests protect exact declared runtime/test requirements and Python metadata; installed Core/SDK commit-archive provenance plus selected framework/crypto versions; and actual SDK composition through the production required-control factory. Archive metadata identifies selected source, not a new independent cryptographic audit or complete transitive dependency lock. Read [pyproject.toml](../../../pyproject.toml) with the actual selected SDK metadata on adoption.
 
-The current Servers #237 declared-slot alignment changes only the two archive
-constants to accepted Core `a3f212063b0eb83f08599fc729c05c473aa5a1ef` and SDK
-`f1bc730a7b244d7a713eb4a6531a5fb5fb76eee0`. All declared and installed archive
+The current Servers #249 retained-update alignment changes only the two archive
+constants to accepted Core `fe8d44fa09eed7d0d3df70f7782203f3045f9c15` and SDK
+`a35e3a50b0beb6043284847a2dde4f7eaa2f945c`. All declared and installed archive
 checks, framework versions, real receiver composition, denial and audit
 assertions remain intact. No new behavioral test or fabricated red is required
 for this mechanical update. The unchanged owning Docker gate must establish
