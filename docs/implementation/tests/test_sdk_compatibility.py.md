@@ -3,14 +3,20 @@ Maintain this document alongside its source file. When the source or relevant im
 
 Three tests protect exact declared runtime/test requirements and Python metadata; installed Core/SDK commit-archive provenance plus selected framework/crypto versions; and actual SDK composition through the production required-control factory. Archive metadata identifies selected source, not a new independent cryptographic audit or complete transitive dependency lock. Read [pyproject.toml](../../../pyproject.toml) with the actual selected SDK metadata on adoption.
 
-The current Servers #249 retained-update alignment changes only the two archive
-constants to accepted Core `fe8d44fa09eed7d0d3df70f7782203f3045f9c15` and SDK
-`a35e3a50b0beb6043284847a2dde4f7eaa2f945c`. All declared and installed archive
+Secrets #50 / Servers #251's image-update alignment changes only the two archive
+constants to accepted Core `05b5f28a624e6e03f1dadbe6ad77ece2bec09601` and actual
+accepted SDK #53 merge `9aa01ef7b2df6106f6ad87c1625a7feb93394b88`. All declared and installed archive
 checks, framework versions, real receiver composition, denial and audit
 assertions remain intact. No new behavioral test or fabricated red is required
 for this mechanical update. The unchanged owning Docker gate must establish
 normal installation and package compatibility; it does not prove downstream
 Servers runtime or live deployment. Prior coordinates below are historical.
+
+Core's changed production module is the managed-update compiler, which this
+owner does not consume. The adopted SDK changes metadata and exact checks only;
+receiver/signing contracts and actual Secrets composition remain unchanged.
+After normal gate validation and North acceptance, Interpreters selects the
+accepted Secrets successor. No published artifact rebuild follows from this pin.
 
 The composition fixture uses real temporary SQLite custody and [api.create_app](../../../src/control_plane_kit_secrets/api.py), with required synthetic public control, an initializer returning the existing stores/empty credentials and actual production-prepared SDK verifiers. A forwarding observer records the complete pre-install route/schema and wraps the real liveness callback to count observations, then calls the actual SDK installer exactly once. It introduces no alternative dispatcher semantics or second installation. Assertions retain the canonical static response, typed signed liveness, missing/wrong-purpose denial, one observation and no audit rows. It regenerates OpenAPI after installation before full schema comparison, so the pre-install cache cannot stand in for proof. Legacy health/docs and provider authentication denial remain observable.
 

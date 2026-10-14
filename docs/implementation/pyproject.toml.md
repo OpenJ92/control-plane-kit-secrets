@@ -1,9 +1,19 @@
 Source: [pyproject.toml](../../pyproject.toml).
 Maintain this document alongside its source file. When the source or relevant imported contracts change, verify and update this companion in the same change.
 
-This package metadata selects setuptools discovery under src, Python >=3.11, and includes the py.typed marker. Runtime dependencies explicitly select Core fe8d44fa09eed7d0d3df70f7782203f3045f9c15 from its commit archive/core subdirectory, SDK[fastapi] a35e3a50b0beb6043284847a2dde4f7eaa2f945c from its commit archive, and cryptography50.0.0. The selected SDK extra requires FastAPI0.141.1, Starlette1.6.0 and PyJWT2.13.0 with the same crypto version. This is an exact compatibility profile for those packages, not a complete transitive lockfile.
+This package metadata selects setuptools discovery under src, Python >=3.11, and includes the py.typed marker. Runtime dependencies explicitly select Core 05b5f28a624e6e03f1dadbe6ad77ece2bec09601 from its commit archive/core subdirectory, SDK[fastapi] 9aa01ef7b2df6106f6ad87c1625a7feb93394b88 from its commit archive, and cryptography50.0.0. The selected SDK extra requires FastAPI0.141.1, Starlette1.6.0 and PyJWT2.13.0 with the same crypto version. This is an exact compatibility profile for those packages, not a complete transitive lockfile.
 
-Servers #249's retained-update alignment adopts the actual accepted Core/O1 #1981
+Secrets #50 / Servers #251 adopts accepted Core `05b5f28` and SDK #53 merge
+`9aa01ef7` together. Core's only changed production module since `fe8d44fa` is
+the managed-update compiler; this owner does not consume it. Receiver, wrapper,
+health, key and receipt contracts are unchanged. SDK's accepted change is also
+metadata/checks/documentation only and selects the identical Core archive.
+Existing exact provenance and real receiver composition tests remain intact;
+the unchanged normal owning gate must establish this adoption. No custody,
+schema, auth, signing, route, installer or provider behavior changes. Acceptance
+supplies the actual Secrets successor for Interpreters, then Servers #251.
+
+Historical Servers #249's retained-update alignment adopts the actual accepted Core/O1 #1981
 and SDK #51 merges together. Core expands its common managed-update compiler
 since the prior `a3f21206` selection. Its strict actual V2 codec and
 Secrets-consumed receiver contracts are unchanged. SDK production source,
