@@ -1,9 +1,19 @@
 Source: [pyproject.toml](../../pyproject.toml).
 Maintain this document alongside its source file. When the source or relevant imported contracts change, verify and update this companion in the same change.
 
-This package metadata selects setuptools discovery under src, Python >=3.11, and includes the py.typed marker. Runtime dependencies explicitly select Core 87e231c661879e44816ba71ff9320c040c868d60 from its commit archive/core subdirectory, SDK[fastapi] ad0582937d7e41f1e7a41295fa1de58c2ce4cba2 from its commit archive, and cryptography50.0.0. The selected SDK extra requires FastAPI0.141.1, Starlette1.6.0 and PyJWT2.13.0 with the same crypto version. This is an exact compatibility profile for those packages, not a complete transitive lockfile.
+This package metadata selects setuptools discovery under src, Python >=3.11, and includes the py.typed marker. Runtime dependencies explicitly select Core 5b66dcac4bf2cf76219efaf05fa5ff06588bd16a from its commit archive/core subdirectory, SDK[fastapi] d4cbbb16a4ce47bae0b791adab5de8940355ea99 from its commit archive, and cryptography50.0.0. The selected SDK extra requires FastAPI0.141.1, Starlette1.6.0 and PyJWT2.13.0 with the same crypto version. This is an exact compatibility profile for those packages, not a complete transitive lockfile.
 
-The selected-secret alignment adopts accepted Core/Operations #1988 and actual
+Secrets #54 adopts accepted Core #1991 and actual SDK #57 merge together.
+Core's only production delta from the previous selected `87e231c6` is its
+managed-update compiler; Secrets does not consume that planner. SDK runtime
+source and extras are unchanged and select the same exact Core archive.
+Existing declared/installed provenance and real receiver composition tests
+govern the unchanged owning Docker gate. No custody, schema, auth, signing,
+route, installer or provider behavior changes. The actual accepted Secrets
+merge feeds Interpreters #201, followed by Servers #252; package adoption does
+not establish live selected-secret installation.
+
+Historical selected-secret alignment adopts accepted Core/Operations #1988 and actual
 SDK #55 merge `ad0582937d7e41f1e7a41295fa1de58c2ce4cba2`. Core adds secret
 selection/grant/receipt and planning/runtime contracts; the receiver, wrapper,
 health and key contracts consumed by Secrets remain unchanged. SDK production
