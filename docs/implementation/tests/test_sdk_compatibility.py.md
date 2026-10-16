@@ -3,7 +3,17 @@ Maintain this document alongside its source file. When the source or relevant im
 
 Three tests protect exact declared runtime/test requirements and Python metadata; installed Core/SDK commit-archive provenance plus selected framework/crypto versions; and actual SDK composition through the production required-control factory. Archive metadata identifies selected source, not a new independent cryptographic audit or complete transitive dependency lock. Read [pyproject.toml](../../../pyproject.toml) with the actual selected SDK metadata on adoption.
 
-Secrets #50 / Servers #251's image-update alignment changes only the two archive
+The selected-secret alignment changes only the two archive constants to accepted
+Core `87e231c661879e44816ba71ff9320c040c868d60` and actual accepted SDK #55 merge
+`ad0582937d7e41f1e7a41295fa1de58c2ce4cba2`. Exact declarations, installed archive
+provenance, framework versions, real production-factory receiver composition,
+denial and audit assertions remain intact. Core adds selected-secret and
+planning/runtime contracts outside the receiver definitions used here; SDK
+runtime source is unchanged. The normal Docker gate must prove compatible
+installation and behavior. No artificial behavioral red, dependency bypass,
+provider mutation or live deployment claim follows from this coordinate update.
+
+Historical Secrets #50 / Servers #251's image-update alignment changes only the two archive
 constants to accepted Core `05b5f28a624e6e03f1dadbe6ad77ece2bec09601` and actual
 accepted SDK #53 merge `9aa01ef7b2df6106f6ad87c1625a7feb93394b88`. All declared and installed archive
 checks, framework versions, real receiver composition, denial and audit
@@ -12,7 +22,7 @@ for this mechanical update. The unchanged owning Docker gate must establish
 normal installation and package compatibility; it does not prove downstream
 Servers runtime or live deployment. Prior coordinates below are historical.
 
-Core's changed production module is the managed-update compiler, which this
+For that historical alignment, Core's changed production module is the managed-update compiler, which this
 owner does not consume. The adopted SDK changes metadata and exact checks only;
 receiver/signing contracts and actual Secrets composition remain unchanged.
 After normal gate validation and North acceptance, Interpreters selects the

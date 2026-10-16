@@ -1,9 +1,20 @@
 Source: [pyproject.toml](../../pyproject.toml).
 Maintain this document alongside its source file. When the source or relevant imported contracts change, verify and update this companion in the same change.
 
-This package metadata selects setuptools discovery under src, Python >=3.11, and includes the py.typed marker. Runtime dependencies explicitly select Core 05b5f28a624e6e03f1dadbe6ad77ece2bec09601 from its commit archive/core subdirectory, SDK[fastapi] 9aa01ef7b2df6106f6ad87c1625a7feb93394b88 from its commit archive, and cryptography50.0.0. The selected SDK extra requires FastAPI0.141.1, Starlette1.6.0 and PyJWT2.13.0 with the same crypto version. This is an exact compatibility profile for those packages, not a complete transitive lockfile.
+This package metadata selects setuptools discovery under src, Python >=3.11, and includes the py.typed marker. Runtime dependencies explicitly select Core 87e231c661879e44816ba71ff9320c040c868d60 from its commit archive/core subdirectory, SDK[fastapi] ad0582937d7e41f1e7a41295fa1de58c2ce4cba2 from its commit archive, and cryptography50.0.0. The selected SDK extra requires FastAPI0.141.1, Starlette1.6.0 and PyJWT2.13.0 with the same crypto version. This is an exact compatibility profile for those packages, not a complete transitive lockfile.
 
-Secrets #50 / Servers #251 adopts accepted Core `05b5f28` and SDK #53 merge
+The selected-secret alignment adopts accepted Core/Operations #1988 and actual
+SDK #55 merge `ad0582937d7e41f1e7a41295fa1de58c2ce4cba2`. Core adds secret
+selection/grant/receipt and planning/runtime contracts; the receiver, wrapper,
+health and key contracts consumed by Secrets remain unchanged. SDK production
+source is unchanged and declares the same exact Core archive. Existing strict
+declared/installed provenance and real receiver composition tests must pass in
+the unchanged owning gate. Custody, schema, auth, signing, routes, installers,
+framework versions and provider behavior are unchanged. The accepted Secrets
+merge will unblock Interpreters #190/#191 dependency assembly; it does not prove
+selected-secret installation or Servers #237/#252 acceptance.
+
+Historical Secrets #50 / Servers #251 adopts accepted Core `05b5f28` and SDK #53 merge
 `9aa01ef7` together. Core's only changed production module since `fe8d44fa` is
 the managed-update compiler; this owner does not consume it. Receiver, wrapper,
 health, key and receipt contracts are unchanged. SDK's accepted change is also
