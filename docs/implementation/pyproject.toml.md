@@ -1,18 +1,18 @@
 Source: [pyproject.toml](../../pyproject.toml).
 Maintain this document alongside its source file. When the source or relevant imported contracts change, verify and update this companion in the same change.
 
-This package metadata selects setuptools discovery under src, Python >=3.11, and includes the py.typed marker. Runtime dependencies explicitly select Core 012a7b8b7cc153cbf17b1a62513fab747eaad782 from its commit archive/core subdirectory, SDK[fastapi] e289d6939b7e6432ffa5181789b0600bf8e3ffe2 from its commit archive, and cryptography50.0.0. The selected SDK extra requires FastAPI0.141.1, Starlette1.6.0 and PyJWT2.13.0 with the same crypto version. This is an exact compatibility profile for those packages, not a complete transitive lockfile.
+This package metadata selects setuptools discovery under src, Python >=3.11, and includes the py.typed marker. Runtime dependencies explicitly select Core 9861e536e79314005499ae07379f627bfb1599a2 from its commit archive/core subdirectory, SDK[fastapi] d4e7c4d91c054f139e2971774ae5e37fc741262d from its commit archive, and cryptography50.0.0. The selected SDK extra requires FastAPI0.141.1, Starlette1.6.0 and PyJWT2.13.0 with the same crypto version. This is an exact compatibility profile for those packages, not a complete transitive lockfile.
 
-Secrets #56 adopts accepted Core/Operations #1977 and actual SDK #59 merge together.
-Core's only production delta from the previous selected `5b66dcac` is its
-managed-update compiler's retained-verifier refresh relation; Secrets does not
+Secrets #58 adopts accepted Core/Operations #1979 and actual SDK #61 merge together.
+Core's only production delta from the previous selected `012a7b8b` is its
+managed-update compiler's coupled declaration/route relation; Secrets does not
 consume that planner. SDK runtime
 source and extras are unchanged and select the same exact Core archive.
 Existing declared/installed provenance and real receiver composition tests
 govern the unchanged owning Docker gate. No custody, schema, auth, signing,
 route, installer or provider behavior changes. The actual accepted Secrets
-merge feeds Interpreters #203, followed by Servers #253; package adoption does
-not establish installed verifier refresh or live grandparent acceptance.
+merge feeds Interpreters #205, followed by Servers #254; package adoption does
+not establish installed declaration cutover or live grandparent acceptance.
 
 Historical selected-secret alignment adopts accepted Core/Operations #1988 and actual
 SDK #55 merge `ad0582937d7e41f1e7a41295fa1de58c2ce4cba2`. Core adds secret
