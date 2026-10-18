@@ -3,7 +3,17 @@ Maintain this document alongside its source file. When the source or relevant im
 
 Three tests protect exact declared runtime/test requirements and Python metadata; installed Core/SDK commit-archive provenance plus selected framework/crypto versions; and actual SDK composition through the production required-control factory. Archive metadata identifies selected source, not a new independent cryptographic audit or complete transitive dependency lock. Read [pyproject.toml](../../../pyproject.toml) with the actual selected SDK metadata on adoption.
 
-Secrets #58 changes only the two archive constants to accepted Core
+Secrets #60 changes only the two archive constants to accepted Core
+`73d87e99bf711ff8a88112ca56c5eee8055ac5b7` and actual SDK #63 merge
+`1657cb91b143931bafcdb32108950d2bbbb66d95`. Core's new private declaration
+relation and selection/planning changes do not alter this provider's receiver
+codec or protocol. SDK runtime source and extras are unchanged. Exact metadata,
+installed archive provenance, framework versions, real production receiver
+composition, denial and audit assertions remain intact. Normal Docker package
+validation must prove compatibility; no artificial red or dependency override
+is needed, and no provider deployment follows from this package evidence.
+
+Historical Secrets #58 changes only the two archive constants to accepted Core
 `9861e536e79314005499ae07379f627bfb1599a2` and SDK #61 merge
 `d4e7c4d91c054f139e2971774ae5e37fc741262d`. Core changes only its managed-update
 compiler; SDK runtime source is unchanged. Exact metadata, installed archive
