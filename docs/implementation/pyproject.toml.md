@@ -1,7 +1,18 @@
 Source: [pyproject.toml](../../pyproject.toml).
 Maintain this document alongside its source file. When the source or relevant imported contracts change, verify and update this companion in the same change.
 
-This package metadata selects setuptools discovery under src, Python >=3.11, and includes the py.typed marker. Runtime dependencies explicitly select Core 9861e536e79314005499ae07379f627bfb1599a2 from its commit archive/core subdirectory, SDK[fastapi] d4e7c4d91c054f139e2971774ae5e37fc741262d from its commit archive, and cryptography50.0.0. The selected SDK extra requires FastAPI0.141.1, Starlette1.6.0 and PyJWT2.13.0 with the same crypto version. This is an exact compatibility profile for those packages, not a complete transitive lockfile.
+This package metadata selects setuptools discovery under src, Python >=3.11, and includes the py.typed marker. Runtime dependencies explicitly select Core 73d87e99bf711ff8a88112ca56c5eee8055ac5b7 from its commit archive/core subdirectory, SDK[fastapi] 1657cb91b143931bafcdb32108950d2bbbb66d95 from its commit archive, and cryptography50.0.0. The selected SDK extra requires FastAPI0.141.1, Starlette1.6.0 and PyJWT2.13.0 with the same crypto version. This is an exact compatibility profile for those packages, not a complete transitive lockfile.
+
+Secrets #60 adopts accepted Core #2005 and actual SDK #63 merge together.
+Core adds a private receiver declaration-compatibility relation consumed by
+secret-selection authoring and management planning; this provider calls neither.
+The receiver codec and protocol definitions used by control.py are unchanged.
+SDK runtime source and extras are unchanged and require the same Core archive.
+Existing strict metadata, installed provenance and real receiver composition
+tests govern the ordinary Docker gate. No custody, schema, auth, signing,
+installer, route or provider behavior changes. Acceptance supplies the actual
+Secrets merge for Interpreters, then Servers #254; it does not prove a live
+declaration cutover. Earlier adoption accounts below remain historical.
 
 Secrets #58 adopts accepted Core/Operations #1979 and actual SDK #61 merge together.
 Core's only production delta from the previous selected `012a7b8b` is its
