@@ -1,9 +1,23 @@
 Source: [pyproject.toml](../../pyproject.toml).
 Maintain this document alongside its source file. When the source or relevant imported contracts change, verify and update this companion in the same change.
 
-This package metadata selects setuptools discovery under src, Python >=3.11, and includes the py.typed marker. Runtime dependencies explicitly select Core 73d87e99bf711ff8a88112ca56c5eee8055ac5b7 from its commit archive/core subdirectory, SDK[fastapi] 1657cb91b143931bafcdb32108950d2bbbb66d95 from its commit archive, and cryptography50.0.0. The selected SDK extra requires FastAPI0.141.1, Starlette1.6.0 and PyJWT2.13.0 with the same crypto version. This is an exact compatibility profile for those packages, not a complete transitive lockfile.
+This package metadata selects setuptools discovery under src, Python >=3.11, and includes the py.typed marker. Runtime dependencies explicitly select Core ec61e2b17c3a3f1bdea1dd6bc8fc64ac1b9528b0 from its commit archive/core subdirectory, SDK[fastapi] eff09090755eb21028695f0224eec7b81f2db535 from its commit archive, and cryptography50.0.0. The selected SDK extra requires FastAPI0.141.1, Starlette1.6.0 and PyJWT2.13.0 with the same crypto version. This is an exact compatibility profile for those packages, not a complete transitive lockfile.
 
-Secrets #60 adopts accepted Core #2005 and actual SDK #63 merge together.
+Secrets #62 adopts accepted Core required-configuration support and actual
+SDK #65 merge together. Core adds structural product requirements, declared
+selection, material guards and related secret-selection composition; this
+provider still consumes actual receiver configuration through the unchanged
+value/codec and signed contracts. SDK runtime source and extras are unchanged
+and select the same Core archive. Exact installed provenance and existing
+receiver, initialization, custody and denial laws must pass in the ordinary
+Docker gate. No production source, schema, auth, signing, runner or provider
+behavior changes. The actual accepted Secrets merge feeds Interpreters #211
+and Servers #280; no managed-image or live acceptance follows from this pin.
+The runner attempts best-effort removal of its selected container on entry/exit
+but retains the built image; execution evidence must distinguish verified
+container absence from intentional image retention.
+
+Historical Secrets #60 adopts accepted Core #2005 and actual SDK #63 merge together.
 Core adds a private receiver declaration-compatibility relation consumed by
 secret-selection authoring and management planning; this provider calls neither.
 The receiver codec and protocol definitions used by control.py are unchanged.
