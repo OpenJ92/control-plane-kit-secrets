@@ -1,9 +1,21 @@
 Source: [pyproject.toml](../../pyproject.toml).
 Maintain this document alongside its source file. When the source or relevant imported contracts change, verify and update this companion in the same change.
 
-This package metadata selects setuptools discovery under src, Python >=3.11, and includes the py.typed marker. Runtime dependencies explicitly select Core ec61e2b17c3a3f1bdea1dd6bc8fc64ac1b9528b0 from its commit archive/core subdirectory, SDK[fastapi] eff09090755eb21028695f0224eec7b81f2db535 from its commit archive, and cryptography50.0.0. The selected SDK extra requires FastAPI0.141.1, Starlette1.6.0 and PyJWT2.13.0 with the same crypto version. This is an exact compatibility profile for those packages, not a complete transitive lockfile.
+This package metadata selects setuptools discovery under src, Python >=3.11, and includes the py.typed marker. Runtime dependencies explicitly select Core 955666898218e4f2956b6e9fcd33bdba97ffdb06 from its commit archive/core subdirectory, SDK[fastapi] cad5cc3dacbff1da79e6cc8b4c0c88526363e033 from its commit archive, and cryptography50.0.0. The selected SDK extra requires FastAPI0.141.1, Starlette1.6.0 and PyJWT2.13.0 with the same crypto version. This is an exact compatibility profile for those packages, not a complete transitive lockfile.
 
-Secrets #62 adopts accepted Core required-configuration support and actual
+Secrets #64 adopts accepted Core `955666898218e4f2956b6e9fcd33bdba97ffdb06`
+and actual SDK #67 merge `cad5cc3dacbff1da79e6cc8b4c0c88526363e033`.
+Core adds the pure retained-image ingress compiler and its exports; this
+provider does not consume that planner. Receiver configuration, codec and
+signed contracts are unchanged. SDK runtime and extras are unchanged and
+select the identical Core archive. Existing declared/installed provenance,
+real receiver composition, custody and denial tests govern the ordinary
+Docker gate. No production, schema, auth, signing, provider or runner changes.
+The accepted Secrets merge supplies Interpreters #214's dependency cohort;
+it does not prove retained-image observation or live deployment. The runner
+removes its selected test container but intentionally retains the built image.
+
+Historical Secrets #62 adopts accepted Core required-configuration support and actual
 SDK #65 merge together. Core adds structural product requirements, declared
 selection, material guards and related secret-selection composition; this
 provider still consumes actual receiver configuration through the unchanged
