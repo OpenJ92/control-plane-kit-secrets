@@ -18,9 +18,9 @@ fail-closed resolve behavior when audit persistence is unavailable.
 ## Delegation Key Generation
 
 The provider owns a closed set of Ed25519 generation operations for gateway
-probe, gateway node-control transit, workload node-control, gateway health-read
-transit, and workload health-read delegation. A caller supplies only bounded
-identity and correlation metadata:
+probe, gateway node-control transit, workload node-control, workload
+node-control surface-read, gateway health-read transit, and workload health-read
+delegation. A caller supplies only bounded identity and correlation metadata:
 
 ```text
 workspace + SecretReference + admitted purpose + issuer + correlation
@@ -38,12 +38,16 @@ metadata fails closed, and a revoked generated reference cannot be replayed
 into service. Compact profile construction and signing remain outside this
 provider.
 
-Health families use exactly these pairs:
+The newly adopted surface-read and health families use exactly these pairs:
 
 | Purpose | Resolution intent |
 | --- | --- |
+| `workload-node-control-surface-read` | `gateway.probe-signing-key` |
 | `gateway-node-health-read-transit` | `gateway.node-health-read-transit-signing-key` |
 | `workload-node-health-read` | `workload.node-health-read-signing-key` |
+
+Surface read intentionally reuses the legacy gateway probe signing intent. It
+does not create a new secret-use intent or broaden the other admitted families.
 
 Generation and resolution still require their separate action/workspace/intent
 grants. Existing scoped write/rotate also admit these intent values; wildcard
