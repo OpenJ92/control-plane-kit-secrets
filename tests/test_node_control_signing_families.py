@@ -55,13 +55,19 @@ FAMILIES = (
 )
 
 
+SURFACE_READ_FAMILY = (
+    DelegationKeyPurpose.WORKLOAD_NODE_CONTROL_SURFACE_READ.value,
+    SecretUseIntent.GATEWAY_PROBE_SIGNING_KEY.value,
+)
+
+
 HEALTH_FAMILIES = (
     (DelegationKeyPurpose.GATEWAY_NODE_HEALTH_READ_TRANSIT.value,
      SecretUseIntent.GATEWAY_NODE_HEALTH_READ_TRANSIT_SIGNING_KEY.value),
     (DelegationKeyPurpose.WORKLOAD_NODE_HEALTH_READ.value,
      SecretUseIntent.WORKLOAD_NODE_HEALTH_READ_SIGNING_KEY.value),
 )
-FAMILIES += HEALTH_FAMILIES
+FAMILIES += (SURFACE_READ_FAMILY, *HEALTH_FAMILIES)
 
 
 class NodeControlSigningFamilyTests(unittest.TestCase):
@@ -96,11 +102,7 @@ class NodeControlSigningFamilyTests(unittest.TestCase):
             },
             dict(FAMILIES),
         )
-        for unsupported in (
-            DelegationKeyPurpose.WORKLOAD_NODE_CONTROL_SURFACE_READ.value,
-            "unknown-purpose",
-            None,
-        ):
+        for unsupported in ("unknown-purpose", None):
             with self.subTest(unsupported=unsupported):
                 with self.assertRaises(SecretMetadataInvalid) as caught:
                     family_module.delegation_signing_intent_for(unsupported)
@@ -115,6 +117,7 @@ class NodeControlSigningFamilyTests(unittest.TestCase):
                 ("unknown-purpose", FAMILIES[0][1]),
                 (FAMILIES[1][0], FAMILIES[2][1]),
                 (FAMILIES[2][0], FAMILIES[0][1]),
+                (SURFACE_READ_FAMILY[0], FAMILIES[2][1]),
                 (HEALTH_FAMILIES[0][0], HEALTH_FAMILIES[1][1]),
                 (HEALTH_FAMILIES[1][0], HEALTH_FAMILIES[0][1]),
                 (HEALTH_FAMILIES[0][0], FAMILIES[1][1]),
@@ -140,7 +143,7 @@ class NodeControlSigningFamilyTests(unittest.TestCase):
             self.assertEqual(fixture.store.raw_rows_for_tests(), [])
             self.assertEqual(fixture.audit.rows_for_tests(), [])
 
-    def test_api_generates_and_resolves_all_five_exact_families(self) -> None:
+    def test_api_generates_and_resolves_all_six_exact_families(self) -> None:
         with _fixture() as fixture:
             for index, (purpose, intent) in enumerate(FAMILIES):
                 with self.subTest(purpose=purpose):
@@ -208,7 +211,7 @@ class NodeControlSigningFamilyTests(unittest.TestCase):
             )
 
     def test_restart_replay_preserves_family_and_public_identity(self) -> None:
-        for purpose, intent in (FAMILIES[2], *HEALTH_FAMILIES):
+        for purpose, intent in (FAMILIES[2], SURFACE_READ_FAMILY, *HEALTH_FAMILIES):
             with self.subTest(purpose=purpose):
                 with _fixture() as fixture:
                     arguments = fixture.arguments(
@@ -238,7 +241,7 @@ class NodeControlSigningFamilyTests(unittest.TestCase):
                     )
 
     def test_same_correlation_converges_and_audits_the_admitted_intent(self) -> None:
-        for purpose, intent in (FAMILIES[1], *HEALTH_FAMILIES):
+        for purpose, intent in (FAMILIES[1], SURFACE_READ_FAMILY, *HEALTH_FAMILIES):
             with self.subTest(purpose=purpose):
                 with _fixture() as fixture:
                     arguments = fixture.arguments(
@@ -268,7 +271,7 @@ class NodeControlSigningFamilyTests(unittest.TestCase):
     def test_replay_rejects_generation_row_and_authenticated_family_drift(
         self,
     ) -> None:
-        for purpose, intent in (FAMILIES[1], *HEALTH_FAMILIES):
+        for purpose, intent in (FAMILIES[1], SURFACE_READ_FAMILY, *HEALTH_FAMILIES):
             with self.subTest(purpose=purpose):
                 for corrupted_labels in (False, True):
                     with self.subTest(corrupted_labels=corrupted_labels), _fixture() as fixture:
@@ -399,7 +402,7 @@ class NodeControlSigningFamilyTests(unittest.TestCase):
     def test_generation_response_audit_and_plaintext_rows_exclude_private_material(
         self,
     ) -> None:
-        for purpose, intent in (FAMILIES[2], *HEALTH_FAMILIES):
+        for purpose, intent in (FAMILIES[2], SURFACE_READ_FAMILY, *HEALTH_FAMILIES):
             with self.subTest(purpose=purpose):
                 with _fixture() as fixture:
                     generated = fixture.generate_api(
@@ -467,7 +470,7 @@ class NodeControlSigningFamilyTests(unittest.TestCase):
                         "SELECT count(*) FROM secret_resolution_selections"
                     ).fetchone()[0], 0)
                 self.assertEqual([row["outcome"] for row in fixture.audit.rows_for_tests()],
-                                 ["generated", *(["denied"] * 4)])
+                                 ["generated", *(["denied"] * (len(FAMILIES) - 1))])
                 self.assertEqual(fixture.resolve_api(secret_id="key-health", intent=intent,
                                                     correlation_id="right-health").status_code, 200)
 
