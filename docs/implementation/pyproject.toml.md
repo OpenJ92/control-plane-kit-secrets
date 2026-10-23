@@ -1,9 +1,20 @@
 Source: [pyproject.toml](../../pyproject.toml).
 Maintain this document alongside its source file. When the source or relevant imported contracts change, verify and update this companion in the same change.
 
-This package metadata selects setuptools discovery under src, Python >=3.11, and includes the py.typed marker. Runtime dependencies explicitly select Core 955666898218e4f2956b6e9fcd33bdba97ffdb06 from its commit archive/core subdirectory, SDK[fastapi] cad5cc3dacbff1da79e6cc8b4c0c88526363e033 from its commit archive, and cryptography50.0.0. The selected SDK extra requires FastAPI0.141.1, Starlette1.6.0 and PyJWT2.13.0 with the same crypto version. This is an exact compatibility profile for those packages, not a complete transitive lockfile.
+This package metadata selects setuptools discovery under src, Python >=3.11, and includes the py.typed marker. Runtime dependencies explicitly select Core 879efb9576ac0580a6236d0a7372c036537b4dfe from its commit archive/core subdirectory, SDK[fastapi] 43838fd0f4391428cfffa87f8c4dbd5cc6d5eab1 from its commit archive, and cryptography50.0.0. The selected SDK extra requires FastAPI0.141.1, Starlette1.6.0 and PyJWT2.13.0 with the same crypto version. This is an exact compatibility profile for those packages, not a complete transitive lockfile.
 
-Secrets #64 adopts accepted Core `955666898218e4f2956b6e9fcd33bdba97ffdb06`
+Secrets #68 adopts accepted Core `879efb9576ac0580a6236d0a7372c036537b4dfe`
+and actual SDK #69 merge `43838fd0f4391428cfffa87f8c4dbd5cc6d5eab1`.
+Core changes control-plane command/read facts and the provision policy scope;
+the provider-consumed receiver, wrapper, signing and health contracts are
+unchanged. SDK runtime and extras are unchanged and select the same Core archive.
+Existing declared/installed provenance and real receiving/custody tests govern
+normal Docker adoption. No provider, schema, authentication, signing or runner
+change is made. The accepted Secrets merge supplies Interpreters #222; it does
+not establish Servers #311 composition or published/live behavior. Historical
+adoption records below retain their original coordinates.
+
+Historical Secrets #64 adopts accepted Core `955666898218e4f2956b6e9fcd33bdba97ffdb06`
 and actual SDK #67 merge `cad5cc3dacbff1da79e6cc8b4c0c88526363e033`.
 Core adds the pure retained-image ingress compiler and its exports; this
 provider does not consume that planner. Receiver configuration, codec and
