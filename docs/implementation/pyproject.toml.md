@@ -1,9 +1,19 @@
 Source: [pyproject.toml](../../pyproject.toml).
 Maintain this document alongside its source file. When the source or relevant imported contracts change, verify and update this companion in the same change.
 
-This package metadata selects setuptools discovery under src, Python >=3.11, and includes the py.typed marker. Runtime dependencies explicitly select Core 879efb9576ac0580a6236d0a7372c036537b4dfe from its commit archive/core subdirectory, SDK[fastapi] 43838fd0f4391428cfffa87f8c4dbd5cc6d5eab1 from its commit archive, and cryptography50.0.0. The selected SDK extra requires FastAPI0.141.1, Starlette1.6.0 and PyJWT2.13.0 with the same crypto version. This is an exact compatibility profile for those packages, not a complete transitive lockfile.
+This package metadata selects setuptools discovery under src, Python >=3.11, and includes the py.typed marker. Runtime dependencies explicitly select Core 4cc1716bef4d7548ddb4cd343e53fa06bb447104 from its commit archive/core subdirectory, SDK[fastapi] 464df26c568971362eb3a08abaf9dfc227a4ddbb from its commit archive, and cryptography50.0.0. The selected SDK extra requires FastAPI0.141.1, Starlette1.6.0 and PyJWT2.13.0 with the same crypto version. This is an exact compatibility profile for those packages, not a complete transitive lockfile.
 
-Secrets #68 adopts accepted Core `879efb9576ac0580a6236d0a7372c036537b4dfe`
+Secrets #72 adopts accepted Core `4cc1716bef4d7548ddb4cd343e53fa06bb447104`
+and actual SDK #71 merge `464df26c568971362eb3a08abaf9dfc227a4ddbb`.
+Core's production delta is confined to operations HTTP/parity/projections;
+the receiver configuration, wrapper, signed health and key contracts consumed
+by this provider remain unchanged. SDK runtime and extras are unchanged and
+select that same Core archive. Existing declared/installed provenance and
+production receiver/custody tests own compatibility. No schema, provider,
+auth, signing or runner behavior changes. The accepted Secrets merge supplies
+Interpreters #228, then Servers #341; no live adoption follows from this pin.
+
+Historical Secrets #68 adopts accepted Core `879efb9576ac0580a6236d0a7372c036537b4dfe`
 and actual SDK #69 merge `43838fd0f4391428cfffa87f8c4dbd5cc6d5eab1`.
 Core changes control-plane command/read facts and the provision policy scope;
 the provider-consumed receiver, wrapper, signing and health contracts are
