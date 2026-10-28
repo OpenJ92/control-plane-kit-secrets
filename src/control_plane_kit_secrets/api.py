@@ -62,7 +62,10 @@ MAX_SECRET_REFERENCE_CHARS = 1024
 _IDENTIFIER = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:-]{0,199}$")
 _REFERENCE_PROVIDER = re.compile(r"^[a-z][a-z0-9-]{0,62}$")
 _REFERENCE_SEGMENT = re.compile(r"^[A-Za-z0-9._-]{1,128}$")
-_POLICY_REVOKE_PATH = re.compile(r"^/v1/provider-policy/grants/[^/]+/revoke$")
+_POLICY_COMMAND_ROUTE_PATHS = frozenset({
+    "/v1/provider-policy/grants",
+    "/v1/provider-policy/grants/{grant_id}/revoke",
+})
 class SecretWriteRequest(BaseModel):
     value_base64: str = Field(min_length=1)
     intent: str
@@ -147,9 +150,10 @@ def create_app(
         request: Request,
         exc: RequestValidationError,
     ):
+        route = request.scope.get("route")
         if (
-            request.url.path == "/v1/provider-policy/grants"
-            or _POLICY_REVOKE_PATH.fullmatch(request.url.path) is not None
+            request.method == "POST"
+            and getattr(route, "path", None) in _POLICY_COMMAND_ROUTE_PATHS
         ):
             return JSONResponse(
                 status_code=422,

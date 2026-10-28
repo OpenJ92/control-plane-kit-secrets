@@ -1054,11 +1054,24 @@ class ProviderApiTests(unittest.TestCase):
                 )
                 self.assertEqual(revoked.status_code, 200, revoked.text)
                 self.assertEqual(revoked.json()["resulting_revision"], 3)
+
+                before_invalid_list = fixture.policy_state_snapshot()
+                invalid_list = fixture.client.get(
+                    "/v1/provider-policy/grants?limit=not-an-integer",
+                    headers={
+                        **fixture.headers("admin-token"),
+                        "X-Correlation-ID": "invalid-list-query",
+                    },
+                )
+                self.assertEqual(invalid_list.status_code, 422, invalid_list.text)
+                self.assertIsInstance(invalid_list.json()["detail"], list)
+                self.assertIn("not-an-integer", invalid_list.text)
+                self.assertEqual(fixture.policy_state_snapshot(), before_invalid_list)
             finally:
                 logger.removeHandler(handler)
                 logger.setLevel(previous_level)
 
-            log_text = "\n".join(record.getMessage() for record in records)
+            log_text = "\n".join(repr(vars(record)) for record in records)
             for sentinel in forbidden_fields.values():
                 self.assertNotIn(sentinel, log_text)
 
@@ -1385,26 +1398,23 @@ class _PolicyApiFixture:
 
         with closing(sqlite3.connect(self.database)) as connection:
             revision = connection.execute(
-                "SELECT provider_id, revision FROM provider_policy_state ORDER BY provider_id"
+                "SELECT * FROM provider_policy_state ORDER BY provider_id"
+            ).fetchall()
+            seed = connection.execute(
+                "SELECT * FROM provider_policy_seed ORDER BY provider_id"
             ).fetchall()
             grants = connection.execute(
-                "SELECT grant_id, provider_id, subject, workspace_id, action, intent, "
-                "origin, granted_by, grant_correlation_id, revoked_by, "
-                "revoke_correlation_id, revoked_at FROM provider_grants "
-                "ORDER BY grant_id"
+                "SELECT * FROM provider_grants ORDER BY grant_id"
             ).fetchall()
             commands = connection.execute(
-                "SELECT provider_id, correlation_id, operation, subject, workspace_id, "
-                "action, intent, expected_revision, outcome, code, grant_id, "
-                "resulting_revision, actor FROM provider_policy_commands "
-                "ORDER BY provider_id, correlation_id"
+                "SELECT * FROM provider_policy_commands ORDER BY provider_id, correlation_id"
             ).fetchall()
             events = connection.execute(
-                "SELECT event_id, provider_id, grant_id, subject, workspace_id, action, "
-                "intent, event_kind, actor, correlation_id, outcome, code "
-                "FROM provider_policy_events ORDER BY event_id"
+                "SELECT * FROM provider_policy_events ORDER BY event_id"
             ).fetchall()
-            return tuple(revision), tuple(grants), tuple(commands), tuple(events)
+            return (
+                tuple(revision), tuple(seed), tuple(grants), tuple(commands), tuple(events)
+            )
 
     def audit_rows(self) -> list[dict[str, object]]:
         return self.audit_store.rows_for_tests()
