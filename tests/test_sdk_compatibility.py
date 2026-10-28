@@ -18,6 +18,7 @@ from control_plane_kit_secrets import api, control
 from control_fixtures import ControlAuthority
 from control_plane_kit_secrets.crypto import encode_master_key_for_file, load_master_key_file
 from control_plane_kit_secrets.custody import admit_provider_custody
+from control_plane_kit_secrets.provider_policy import ProviderPolicyStore
 
 
 REPO_ROOT = Path(__file__).parents[1]
@@ -95,7 +96,12 @@ class SdkCompatibilityTests(unittest.TestCase):
                 provider_id="compat-provider", credentials=(),
             )
             with patch.object(api, "install_cpk_wrapper", side_effect=observe_install):
-                app = api.create_app(control=configuration, initialize_provider=lambda: (store, audit, ()),
+                app = api.create_app(control=configuration, initialize_provider=lambda: (
+                    store, audit, (),
+                    ProviderPolicyStore(
+                        base / "provider.sqlite3", provider_id="compat-provider"
+                    ),
+                ),
                                      provider_id="compat-provider", clock=lambda: 150)
             self.assertEqual(len(snapshots), 1)
             prior_routes, prior_schema = snapshots[0]

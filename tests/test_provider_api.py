@@ -14,8 +14,10 @@ from control_plane_kit_secrets.api import ALLOWED_SECRET_USE_INTENTS, create_app
 from control_plane_kit_secrets.audit import AuditUnavailable, SqliteAuditStore
 from control_plane_kit_secrets.auth import ProviderCredential, ProviderGrant
 from control_plane_kit_secrets.crypto import encode_master_key_for_file, load_master_key_file
+from control_plane_kit_secrets.custody import admit_provider_custody
 from control_plane_kit_secrets.models import SecretMissing
 from control_plane_kit_secrets.store import EncryptedSecretStore
+import control_plane_kit_secrets.provider_policy as provider_policy
 from control_plane_kit_secrets import control as control_module
 from control_fixtures import ControlAuthority
 
@@ -33,7 +35,7 @@ class ProviderApiTests(unittest.TestCase):
             "workload.node-health-read-signing-key",
         }))
 
-    def test_bootstrap_purpose_resolution_preserves_exact_and_wildcard_authority(self) -> None:
+    def test_bootstrap_purpose_resolution_preserves_exact_durable_authority(self) -> None:
         purposes = ("secrets.custody-root-key", "secrets.provider-credentials-document")
         for intent, other in (purposes, tuple(reversed(purposes))):
             with self.subTest(intent=intent), _client(credentials=(
@@ -43,8 +45,6 @@ class ProviderApiTests(unittest.TestCase):
                     ProviderGrant("secret.resolve", "workspace-1", (intent,)),)),
                 ProviderCredential("other-purpose-reader", "other-purpose-token", (
                     ProviderGrant("secret.resolve", "workspace-1", (other,)),)),
-                ProviderCredential("wildcard-reader", "wildcard-reader-token", (
-                    ProviderGrant("secret.resolve", "*"),)),
             )) as fixture:
                 material = b"opaque-bootstrap-fixture-material"
                 path = "/v1/workspaces/workspace-1/secrets/bootstrap-material"
@@ -72,9 +72,7 @@ class ProviderApiTests(unittest.TestCase):
                     ("bootstrap-reader-token", intent, "workspace-2", 403, "insufficient-scope"),
                     ("other-purpose-token", intent, "workspace-1", 403, "insufficient-scope"),
                     ("bootstrap-reader-token", other, "workspace-1", 403, "insufficient-scope"),
-                    ("wildcard-reader-token", other, "workspace-1", 403, "secret-intent-mismatch"),
-                    ("wildcard-reader-token", "application.control-token", "workspace-1", 403, "secret-intent-mismatch"),
-                    ("wildcard-reader-token", "secrets.unknown-bootstrap", "workspace-1", 400, "unsupported-intent"),
+                    ("bootstrap-reader-token", "secrets.unknown-bootstrap", "workspace-1", 400, "unsupported-intent"),
                 )
                 for index, (token, purpose, workspace, status, code) in enumerate(denied_cases):
                     with self.subTest(denial=index):
@@ -90,22 +88,16 @@ class ProviderApiTests(unittest.TestCase):
                         self.assertTrue(_b64(material) not in denied.text)
                         self.assertTrue(token not in denied.text)
 
-                wildcard = fixture.client.post(path + "/resolve",
-                    headers=fixture.headers("wildcard-reader-token"),
-                    json={**request, "correlation_id": "bootstrap-wildcard"})
-                self.assertEqual(wildcard.status_code, 200)
-                self.assertTrue(base64.b64decode(wildcard.json()["value_base64"]) == material,
-                                "wildcard resolution changed material")
                 rows = fixture.audit_rows()
                 self.assertEqual([row["outcome"] for row in rows],
-                                 ["stored", "resolved", "resolved", *(["denied"] * 7),
-                                  "malformed", "resolved"])
-                self.assertEqual([row["code"] for row in rows[3:-1]],
+                                 ["stored", "resolved", "resolved", *(["denied"] * 5),
+                                  "malformed"])
+                self.assertEqual([row["code"] for row in rows[3:]],
                                  [case[4] for case in denied_cases])
                 self.assertEqual({row["caller_subject"] for row in rows
                                   if row["outcome"] == "resolved"}, {"worker-a"})
                 for forbidden in (material.decode(), _b64(material), "bootstrap-writer-token",
-                                  "bootstrap-reader-token", "other-purpose-token", "wildcard-reader-token"):
+                                  "bootstrap-reader-token", "other-purpose-token"):
                     self.assertTrue(forbidden not in repr(rows), "audit leaked private fixture material")
 
     def test_exact_version_revocation_is_authorized_audited_and_idempotent(
@@ -821,6 +813,156 @@ class ProviderApiTests(unittest.TestCase):
             self.assertEqual(response.json()["detail"]["code"], "audit-unavailable")
             self.assertNotIn("gateway-signing-key", response.text)
 
+    def test_policy_admin_routes_are_independent_replayable_bounded_and_audited(self) -> None:
+        with _policy_client() as fixture:
+            ordinary_denied = fixture.client.get(
+                "/v1/provider-policy/grants",
+                headers={**fixture.headers("dynamic-token"), "X-Correlation-ID": "list-denied"},
+            )
+            self.assertEqual(ordinary_denied.status_code, 403)
+
+            request = {
+                "subject": "dynamic-client",
+                "workspace_id": "workspace-1",
+                "action": "secret.metadata",
+                "intent": None,
+                "expected_revision": 1,
+                "correlation_id": "grant-metadata-a",
+            }
+            granted = fixture.client.post(
+                "/v1/provider-policy/grants",
+                headers=fixture.headers("admin-token"), json=request,
+            )
+            self.assertEqual(granted.status_code, 200, granted.text)
+            body = granted.json()
+            self.assertEqual(
+                (body["operation"], body["outcome"], body["expected_revision"],
+                 body["resulting_revision"], body["actor"], body["subject"]),
+                ("grant", "granted", 1, 2, "policy-admin", "dynamic-client"),
+            )
+            self.assertNotIn("token", granted.text)
+            replay = fixture.client.post(
+                "/v1/provider-policy/grants",
+                headers=fixture.headers("admin-token"), json=request,
+            )
+            self.assertEqual(replay.json(), body)
+            conflict = fixture.client.post(
+                "/v1/provider-policy/grants",
+                headers=fixture.headers("admin-token"),
+                json={**request, "subject": "different-client"},
+            )
+            self.assertEqual(conflict.status_code, 409)
+
+            command = fixture.client.get(
+                "/v1/provider-policy/commands/grant-metadata-a",
+                headers={**fixture.headers("admin-token"), "X-Correlation-ID": "read-command-a"},
+            )
+            self.assertEqual(command.status_code, 200, command.text)
+            self.assertEqual(command.json(), body)
+            without_admin = (
+                ProviderCredential(
+                    subject="policy-admin", token="admin-token", grants=(),
+                    capabilities=(),
+                ),
+                fixture.credentials[1],
+            )
+            with fixture.reconstructed_client(without_admin) as rebuilt:
+                lost_admin = rebuilt.get(
+                    "/v1/provider-policy/commands/grant-metadata-a",
+                    headers={"Authorization": "Bearer admin-token",
+                             "X-Correlation-ID": "read-command-denied"},
+                )
+                self.assertEqual(lost_admin.status_code, 403)
+            listed = fixture.client.get(
+                "/v1/provider-policy/grants?limit=1&intent_mode=none",
+                headers={**fixture.headers("admin-token"), "X-Correlation-ID": "list-a"},
+            )
+            self.assertEqual(listed.status_code, 200, listed.text)
+            self.assertEqual(listed.json()["revision"], 2)
+            self.assertEqual(len(listed.json()["grants"]), 1)
+            exact = fixture.client.get(
+                f"/v1/provider-policy/grants/{body['grant_id']}",
+                headers={**fixture.headers("admin-token"), "X-Correlation-ID": "read-grant-a"},
+            )
+            self.assertEqual(exact.status_code, 200, exact.text)
+            self.assertEqual(exact.json()["revision"], 2)
+            self.assertEqual(exact.json()["grant"]["grant_id"], body["grant_id"])
+
+            revoked = fixture.client.post(
+                f"/v1/provider-policy/grants/{body['grant_id']}/revoke",
+                headers=fixture.headers("admin-token"),
+                json={**request, "expected_revision": 2,
+                      "correlation_id": "revoke-metadata-a"},
+            )
+            self.assertEqual(revoked.status_code, 200, revoked.text)
+            self.assertEqual(revoked.json()["resulting_revision"], 3)
+
+    def test_durable_grant_and_revoke_change_authorization_without_rebuild(self) -> None:
+        with _policy_client() as fixture:
+            fixture.store.create_secret(
+                workspace_id="workspace-1", secret_id="retained",
+                value=b"retained", labels={"intent": "postgres.password"},
+            )
+            path = "/v1/workspaces/workspace-1/secrets/retained/metadata"
+            self.assertEqual(
+                fixture.client.get(path, headers=fixture.headers("dynamic-token")).status_code,
+                403,
+            )
+            grant = fixture.client.post(
+                "/v1/provider-policy/grants",
+                headers=fixture.headers("admin-token"),
+                json={
+                    "subject": "dynamic-client", "workspace_id": "workspace-1",
+                    "action": "secret.metadata", "intent": None,
+                    "expected_revision": 1, "correlation_id": "grant-dynamic",
+                },
+            )
+            self.assertEqual(grant.status_code, 200, grant.text)
+            self.assertEqual(
+                fixture.client.get(path, headers=fixture.headers("dynamic-token")).status_code,
+                200,
+            )
+            revoke = fixture.client.post(
+                f"/v1/provider-policy/grants/{grant.json()['grant_id']}/revoke",
+                headers=fixture.headers("admin-token"),
+                json={
+                    "subject": "dynamic-client", "workspace_id": "workspace-1",
+                    "action": "secret.metadata", "intent": None,
+                    "expected_revision": 2, "correlation_id": "revoke-dynamic",
+                },
+            )
+            self.assertEqual(revoke.status_code, 200, revoke.text)
+            self.assertEqual(
+                fixture.client.get(path, headers=fixture.headers("dynamic-token")).status_code,
+                403,
+            )
+
+    def test_every_secret_action_uses_the_durable_policy_without_static_fallback(self) -> None:
+        with _policy_client() as fixture:
+            cases = (
+                ("secret.write", "postgres.password"),
+                ("secret.generate-delegation-key", "gateway.probe-signing-key"),
+                ("secret.rotate", "postgres.password"),
+                ("secret.resolve", "postgres.password"),
+                ("secret.revoke", None),
+                ("secret.metadata", None),
+            )
+            revision = 1
+            for index, (action, intent) in enumerate(cases):
+                response = fixture.client.post(
+                    "/v1/provider-policy/grants",
+                    headers=fixture.headers("admin-token"),
+                    json={
+                        "subject": "dynamic-client", "workspace_id": "workspace-1",
+                        "action": action, "intent": intent,
+                        "expected_revision": revision,
+                        "correlation_id": f"grant-action-{index}",
+                    },
+                )
+                self.assertEqual(response.status_code, 200, response.text)
+                revision += 1
+            fixture.assert_all_dynamic_action_paths_authorized()
+
 
 class _ApiFixture:
     def __init__(
@@ -836,119 +978,30 @@ class _ApiFixture:
             encode_master_key_for_file(os.urandom(32)),
             encoding="utf-8",
         )
-        store = EncryptedSecretStore(
-            base / "secrets.sqlite3",
+        database = base / "secrets.sqlite3"
+        selected_credentials = credentials if credentials is not None else _default_credentials()
+        store, real_audit_store = admit_provider_custody(
+            database,
             master_key=load_master_key_file(key_path, version="test"),
+            provider_id="provider-a",
+            credentials=selected_credentials,
         )
-        store.initialize()
         self.store = store
         if audit_store_factory is None:
-            self.audit_store = SqliteAuditStore(base / "secrets.sqlite3")
+            self.audit_store = real_audit_store
         else:
-            self.audit_store = audit_store_factory(base / "secrets.sqlite3")
-        self.audit_store.initialize()
+            self.audit_store = audit_store_factory(database)
+        policy_store = provider_policy.ProviderPolicyStore(
+            database, provider_id="provider-a"
+        )
         self.client = TestClient(
             create_app(
                 control=ControlAuthority().configuration(control_module),
                 clock=lambda: 150,
-                initialize_provider=lambda: (store, self.audit_store,
-                    credentials if credentials is not None else (
-                    ProviderCredential(
-                        subject="writer",
-                        token="writer-token",
-                        grants=(
-                            ProviderGrant(
-                                "secret.write",
-                                "workspace-1",
-                                (
-                                    "cloudflare.api-token",
-                                    "gateway.probe-signing-key",
-                                    "oci.pull-credential",
-                                    "postgres.password",
-                                ),
-                            ),
-                        ),
-                    ),
-                    ProviderCredential(
-                        subject="postgres-writer",
-                        token="postgres-writer-token",
-                        grants=(
-                            ProviderGrant(
-                                "secret.write",
-                                "workspace-1",
-                                ("postgres.password",),
-                            ),
-                        ),
-                    ),
-                    ProviderCredential(
-                        subject="metadata",
-                        token="metadata-token",
-                        grants=(
-                            ProviderGrant("secret.metadata", "workspace-1"),
-                        ),
-                    ),
-                    ProviderCredential(
-                        subject="resolver",
-                        token="resolver-token",
-                        grants=(
-                            ProviderGrant(
-                                "secret.resolve",
-                                "workspace-1",
-                                ("gateway.probe-signing-key",),
-                            ),
-                        ),
-                    ),
-                    ProviderCredential(
-                        subject="oci-resolver",
-                        token="oci-resolver-token",
-                        grants=(
-                            ProviderGrant(
-                                "secret.resolve",
-                                "workspace-1",
-                                ("oci.pull-credential",),
-                            ),
-                        ),
-                    ),
-                    ProviderCredential(
-                        subject="rotator",
-                        token="rotate-token",
-                        grants=(
-                            ProviderGrant(
-                                "secret.rotate",
-                                "workspace-1",
-                                (
-                                    "cloudflare.api-token",
-                                    "oci.pull-credential",
-                                ),
-                            ),
-                        ),
-                    ),
-                    ProviderCredential(
-                        subject="revoker",
-                        token="revoke-token",
-                        grants=(
-                            ProviderGrant("secret.revoke", "workspace-1"),
-                        ),
-                    ),
-                    ProviderCredential(
-                        subject="delegation-key-generator",
-                        token="generation-token",
-                        grants=(
-                            ProviderGrant(
-                                "secret.generate-delegation-key",
-                                "workspace-1",
-                                ("gateway.probe-signing-key",),
-                            ),
-                        ),
-                    ),
-                    ProviderCredential(
-                        subject="executor",
-                        token="execution-token",
-                        grants=(
-                            ProviderGrant("graph.execute", "workspace-1"),
-                        ),
-                    ),
-                )),
+                provider_id="provider-a",
+                initialize_provider=lambda: (
+                    store, self.audit_store, selected_credentials, policy_store,
+                ),
             )
         )
 
@@ -1005,6 +1058,182 @@ class _ApiFixture:
                 "correlation_id": correlation_id,
             },
         )
+
+
+class _PolicyApiFixture:
+    def __init__(self) -> None:
+        self._directory = tempfile.TemporaryDirectory()
+        base = Path(self._directory.name)
+        key_path = base / "master.key"
+        key_path.write_text(encode_master_key_for_file(os.urandom(32)), encoding="utf-8")
+        key = load_master_key_file(key_path, version="policy-test")
+        self.credentials = (
+            ProviderCredential(
+                subject="policy-admin", token="admin-token", grants=(),
+                capabilities=("secrets.policy-admin",),
+            ),
+            ProviderCredential(
+                subject="dynamic-client", token="dynamic-token", grants=(),
+                capabilities=(),
+            ),
+        )
+        database = base / "secrets.sqlite3"
+        self.store, self.audit_store = admit_provider_custody(
+            database, master_key=key, provider_id="provider-a",
+            credentials=self.credentials,
+        )
+        policy_store_type = getattr(provider_policy, "ProviderPolicyStore", None)
+        if not callable(policy_store_type):
+            raise AssertionError("durable provider policy store is missing")
+        self.policy_store = policy_store_type(database, provider_id="provider-a")
+        self.client = TestClient(create_app(
+            control=ControlAuthority().configuration(control_module),
+            clock=lambda: 150,
+            provider_id="provider-a",
+            initialize_provider=lambda: (
+                self.store, self.audit_store, self.credentials, self.policy_store,
+            ),
+        ))
+
+    def __enter__(self) -> _PolicyApiFixture:
+        return self
+
+    def __exit__(self, *args: object) -> None:
+        self.client.close()
+        self._directory.cleanup()
+
+    def headers(self, token: str) -> dict[str, str]:
+        return {"Authorization": f"Bearer {token}"}
+
+    def reconstructed_client(
+        self, credentials: tuple[ProviderCredential, ...]
+    ) -> TestClient:
+        return TestClient(create_app(
+            control=ControlAuthority().configuration(control_module),
+            clock=lambda: 150,
+            provider_id="provider-a",
+            initialize_provider=lambda: (
+                self.store, self.audit_store, credentials, self.policy_store,
+            ),
+        ))
+
+    def assert_all_dynamic_action_paths_authorized(self) -> None:
+        write = self.client.post(
+            "/v1/workspaces/workspace-1/secrets/write-target",
+            headers=self.headers("dynamic-token"),
+            json={"value_base64": _b64(b"write"), "intent": "postgres.password"},
+        )
+        assert write.status_code == 200, write.text
+
+        generation = self.client.post(
+            "/v1/workspaces/workspace-1/delegation-keys/generated/generate",
+            headers=self.headers("dynamic-token"),
+            json={
+                "secret_reference": "secret://workspace-secrets/keys/generated",
+                "purpose": "gateway-probe", "issuer": "cpk-server",
+                "caller_subject": "dynamic-client", "correlation_id": "generate-a",
+            },
+        )
+        assert generation.status_code == 200, generation.text
+
+        self.store.create_secret(
+            workspace_id="workspace-1", secret_id="rotate-target", value=b"old",
+            labels={"intent": "postgres.password"},
+        )
+        rotate = self.client.post(
+            "/v1/workspaces/workspace-1/secrets/rotate-target/rotate",
+            headers=self.headers("dynamic-token"),
+            json={"value_base64": _b64(b"new"), "intent": "postgres.password"},
+        )
+        assert rotate.status_code == 200, rotate.text
+
+        self.store.create_secret(
+            workspace_id="workspace-1", secret_id="resolve-target", value=b"resolve",
+            labels={"intent": "postgres.password"},
+        )
+        resolve = self.client.post(
+            "/v1/workspaces/workspace-1/secrets/resolve-target/resolve",
+            headers=self.headers("dynamic-token"),
+            json={
+                "intent": "postgres.password", "caller_subject": "dynamic-client",
+                "correlation_id": "resolve-a",
+            },
+        )
+        assert resolve.status_code == 200, resolve.text
+
+        exact = self.store.create_secret(
+            workspace_id="workspace-1", secret_id="exact-revoke-target",
+            value=b"revoke", labels={"intent": "postgres.password"},
+        )
+        exact_revoke = self.client.post(
+            f"/v1/workspaces/workspace-1/secrets/exact-revoke-target/versions/{exact.version_id}/revoke",
+            headers=self.headers("dynamic-token"),
+            json={
+                "version_number": exact.version_number,
+                "caller_subject": "dynamic-client", "correlation_id": "exact-revoke-a",
+            },
+        )
+        assert exact_revoke.status_code == 200, exact_revoke.text
+
+        self.store.create_secret(
+            workspace_id="workspace-1", secret_id="revoke-target", value=b"revoke"
+        )
+        revoke = self.client.post(
+            "/v1/workspaces/workspace-1/secrets/revoke-target/revoke",
+            headers=self.headers("dynamic-token"), json={},
+        )
+        assert revoke.status_code == 200, revoke.text
+
+        self.store.create_secret(
+            workspace_id="workspace-1", secret_id="metadata-target", value=b"metadata"
+        )
+        metadata = self.client.get(
+            "/v1/workspaces/workspace-1/secrets/metadata-target/metadata",
+            headers=self.headers("dynamic-token"),
+        )
+        assert metadata.status_code == 200, metadata.text
+
+
+def _policy_client() -> _PolicyApiFixture:
+    return _PolicyApiFixture()
+
+
+def _default_credentials() -> tuple[ProviderCredential, ...]:
+    return (
+        ProviderCredential("writer", "writer-token", (
+            ProviderGrant("secret.write", "workspace-1", (
+                "cloudflare.api-token", "gateway.probe-signing-key",
+                "oci.pull-credential", "postgres.password",
+            )),
+        )),
+        ProviderCredential("postgres-writer", "postgres-writer-token", (
+            ProviderGrant("secret.write", "workspace-1", ("postgres.password",)),
+        )),
+        ProviderCredential("metadata", "metadata-token", (
+            ProviderGrant("secret.metadata", "workspace-1", ()),
+        )),
+        ProviderCredential("resolver", "resolver-token", (
+            ProviderGrant("secret.resolve", "workspace-1", ("gateway.probe-signing-key",)),
+        )),
+        ProviderCredential("oci-resolver", "oci-resolver-token", (
+            ProviderGrant("secret.resolve", "workspace-1", ("oci.pull-credential",)),
+        )),
+        ProviderCredential("rotator", "rotate-token", (
+            ProviderGrant("secret.rotate", "workspace-1", (
+                "cloudflare.api-token", "oci.pull-credential",
+            )),
+        )),
+        ProviderCredential("revoker", "revoke-token", (
+            ProviderGrant("secret.revoke", "workspace-1", ()),
+        )),
+        ProviderCredential("delegation-key-generator", "generation-token", (
+            ProviderGrant(
+                "secret.generate-delegation-key", "workspace-1",
+                ("gateway.probe-signing-key",),
+            ),
+        )),
+        ProviderCredential("executor", "execution-token", ()),
+    )
 
 
 def _client(

@@ -7,6 +7,7 @@ from .api import create_app
 from .bootstrap import ProviderConfigurationError, load_provider_credentials
 from .crypto import SecretCryptoError, load_master_key_from_environment
 from .custody import admit_provider_custody
+from .provider_policy import ProviderPolicyStore
 from .control import read_secrets_control_configuration
 
 
@@ -31,7 +32,12 @@ def app_from_environment(environment: Mapping[str, str] | None = None) -> object
             provider_id=provider_id,
             credentials=credentials,
         )
-        return store, audit_store, credentials
+        return (
+            store,
+            audit_store,
+            credentials,
+            ProviderPolicyStore(database_path, provider_id=provider_id),
+        )
 
     return create_app(
         control=control,

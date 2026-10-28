@@ -32,6 +32,7 @@ from control_plane_kit_secrets.models import (
 )
 from control_plane_kit_secrets.audit import SqliteAuditStore
 from control_plane_kit_secrets.auth import ProviderCredential, ProviderGrant
+import control_plane_kit_secrets.provider_policy as provider_policy
 from control_plane_kit_secrets.store import EncryptedSecretStore
 
 
@@ -104,6 +105,205 @@ class EncryptedSecretStoreTests(unittest.TestCase):
                 paths["db"], master_key=key, provider_id="provider-a"
             )
             self.assertEqual(before, _logical_snapshot(paths["db"]))
+
+    def test_durable_policy_commands_replay_revision_revoke_and_regrant(self) -> None:
+        policy_store_type = getattr(provider_policy, "ProviderPolicyStore", None)
+        coordinate_type = getattr(provider_policy, "PolicyCoordinate", None)
+        self.assertTrue(callable(policy_store_type))
+        self.assertTrue(callable(coordinate_type))
+        with tempfile.TemporaryDirectory() as directory:
+            paths = _paths(directory)
+            key = _write_key(paths["key"])
+            self._custody_service().admit_provider_custody(
+                paths["db"], master_key=key, provider_id="provider-a", credentials=()
+            )
+            policy = policy_store_type(paths["db"], provider_id="provider-a")
+            coordinate = coordinate_type(
+                subject="client-a", workspace_id="workspace-a",
+                action="secret.resolve", intent="postgres.password",
+            )
+            self.assertEqual(policy.current_revision(), 1)
+            granted = policy.grant(
+                actor="admin-a", correlation_id="command-grant-a",
+                expected_revision=1, coordinate=coordinate,
+            )
+            self.assertEqual(
+                (granted.operation, granted.outcome, granted.code,
+                 granted.expected_revision, granted.resulting_revision,
+                 granted.actor, granted.coordinate),
+                ("grant", "granted", "provider-policy-granted", 1, 2,
+                 "admin-a", coordinate),
+            )
+            before_replay = _logical_snapshot(paths["db"])
+            self.assertEqual(
+                policy.grant(
+                    actor="admin-a", correlation_id="command-grant-a",
+                    expected_revision=1, coordinate=coordinate,
+                ),
+                granted,
+            )
+            self.assertEqual(before_replay, _logical_snapshot(paths["db"]))
+
+            with self.assertRaises(provider_policy.ProviderPolicyConflict):
+                policy.grant(
+                    actor="different-admin", correlation_id="command-grant-a",
+                    expected_revision=1, coordinate=coordinate,
+                )
+            self.assertEqual(policy.current_revision(), 2)
+            self.assertEqual(
+                policy.read_command(
+                    actor="admin-a", audit_correlation_id="read-command-a",
+                    command_correlation_id="command-grant-a",
+                ),
+                granted,
+            )
+
+            with self.assertRaises(provider_policy.ProviderPolicyConflict) as stale:
+                policy.grant(
+                    actor="admin-a", correlation_id="command-stale",
+                    expected_revision=1,
+                    coordinate=coordinate_type(
+                        subject="client-b", workspace_id="workspace-a",
+                        action="secret.metadata", intent=None,
+                    ),
+                )
+            self.assertEqual(stale.exception.result.code, "policy-revision-conflict")
+            self.assertEqual(stale.exception.result.resulting_revision, 2)
+            self.assertEqual(policy.current_revision(), 2)
+
+            revoked = policy.revoke(
+                actor="admin-a", correlation_id="command-revoke-a",
+                expected_revision=2, grant_id=granted.grant_id,
+                coordinate=coordinate,
+            )
+            self.assertEqual(
+                (revoked.operation, revoked.outcome, revoked.resulting_revision,
+                 revoked.grant_id),
+                ("revoke", "revoked", 3, granted.grant_id),
+            )
+            regranted = policy.grant(
+                actor="admin-a", correlation_id="command-regrant-a",
+                expected_revision=3, coordinate=coordinate,
+            )
+            self.assertNotEqual(regranted.grant_id, granted.grant_id)
+            self.assertEqual(regranted.resulting_revision, 4)
+            policy.require_active(coordinate)
+            with self.assertRaises(provider_policy.ProviderPolicyDenied):
+                policy.require_active(coordinate_type(
+                    subject="client-a", workspace_id="workspace-a",
+                    action="secret.resolve", intent="oci.pull-credential",
+                ))
+
+    def test_policy_reads_are_bounded_audited_and_current_snapshot_pages(self) -> None:
+        policy_store_type = getattr(provider_policy, "ProviderPolicyStore", None)
+        coordinate_type = getattr(provider_policy, "PolicyCoordinate", None)
+        self.assertTrue(callable(policy_store_type))
+        self.assertTrue(callable(coordinate_type))
+        with tempfile.TemporaryDirectory() as directory:
+            paths = _paths(directory)
+            key = _write_key(paths["key"])
+            self._custody_service().admit_provider_custody(
+                paths["db"], master_key=key, provider_id="provider-a", credentials=()
+            )
+            policy = policy_store_type(paths["db"], provider_id="provider-a")
+            first = policy.grant(
+                actor="admin-a", correlation_id="grant-a", expected_revision=1,
+                coordinate=coordinate_type(
+                    subject="client-a", workspace_id="workspace-a",
+                    action="secret.metadata", intent=None,
+                ),
+            )
+            policy.grant(
+                actor="admin-a", correlation_id="grant-b", expected_revision=2,
+                coordinate=coordinate_type(
+                    subject="client-b", workspace_id="workspace-a",
+                    action="secret.metadata", intent=None,
+                ),
+            )
+            page = policy.list_current(
+                actor="admin-a", audit_correlation_id="list-a", limit=1,
+            )
+            self.assertEqual((page.revision, len(page.grants)), (3, 1))
+            self.assertIsNotNone(page.next_after)
+            record = policy.read_grant(
+                actor="admin-a", audit_correlation_id="read-a",
+                grant_id=first.grant_id,
+            )
+            self.assertEqual((record.revision, record.grant.grant_id), (3, first.grant_id))
+            policy.grant(
+                actor="admin-a", correlation_id="grant-c", expected_revision=3,
+                coordinate=coordinate_type(
+                    subject="client-c", workspace_id="workspace-a",
+                    action="secret.metadata", intent=None,
+                ),
+            )
+            next_page = policy.list_current(
+                actor="admin-a", audit_correlation_id="list-b", limit=100,
+                after_grant_id=page.next_after,
+            )
+            self.assertEqual(next_page.revision, 4)
+            self.assertGreaterEqual(len(next_page.grants), 1)
+
+            with closing(sqlite3.connect(paths["db"])) as connection, connection:
+                connection.execute(
+                    "CREATE TRIGGER fail_policy_event BEFORE INSERT ON provider_policy_events "
+                    "BEGIN SELECT RAISE(ABORT, 'event unavailable'); END"
+                )
+            with self.assertRaises(provider_policy.ProviderPolicyUnavailable):
+                policy.read_grant(
+                    actor="admin-a", audit_correlation_id="read-fails",
+                    grant_id=first.grant_id,
+                )
+            before_failed_mutation = _logical_snapshot(paths["db"])
+            with self.assertRaises(provider_policy.ProviderPolicyUnavailable):
+                policy.grant(
+                    actor="admin-a", correlation_id="grant-event-fails",
+                    expected_revision=4,
+                    coordinate=coordinate_type(
+                        subject="client-d", workspace_id="workspace-a",
+                        action="secret.metadata", intent=None,
+                    ),
+                )
+            self.assertEqual(before_failed_mutation, _logical_snapshot(paths["db"]))
+
+    def test_concurrent_policy_commands_compare_one_global_revision(self) -> None:
+        policy_store_type = getattr(provider_policy, "ProviderPolicyStore", None)
+        coordinate_type = getattr(provider_policy, "PolicyCoordinate", None)
+        self.assertTrue(callable(policy_store_type))
+        self.assertTrue(callable(coordinate_type))
+        with tempfile.TemporaryDirectory() as directory:
+            paths = _paths(directory)
+            key = _write_key(paths["key"])
+            self._custody_service().admit_provider_custody(
+                paths["db"], master_key=key, provider_id="provider-a", credentials=()
+            )
+            barrier = Barrier(2)
+
+            def grant(index: int) -> str:
+                policy = policy_store_type(paths["db"], provider_id="provider-a")
+                barrier.wait()
+                try:
+                    policy.grant(
+                        actor=f"admin-{index}", correlation_id=f"command-{index}",
+                        expected_revision=1,
+                        coordinate=coordinate_type(
+                            subject=f"client-{index}", workspace_id="workspace-a",
+                            action="secret.metadata", intent=None,
+                        ),
+                    )
+                    return "granted"
+                except provider_policy.ProviderPolicyConflict as error:
+                    return error.result.code
+
+            with ThreadPoolExecutor(max_workers=2) as executor:
+                outcomes = [future.result() for future in (
+                    executor.submit(grant, 1), executor.submit(grant, 2)
+                )]
+            self.assertEqual(sorted(outcomes), ["granted", "policy-revision-conflict"])
+            self.assertEqual(
+                policy_store_type(paths["db"], provider_id="provider-a").current_revision(),
+                2,
+            )
 
     def test_exact_seed_is_token_free_and_revoked_seed_is_not_resurrected(self) -> None:
         custody = self._custody_service()
