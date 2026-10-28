@@ -12,6 +12,8 @@ from uuid import uuid4
 
 from .auth import ProviderCredential
 
+MAX_POLICY_REVISION = (1 << 63) - 1
+
 
 SCHEMA_VERSION = 2
 INTENT_KEY_NONE = "<none>"
@@ -629,7 +631,10 @@ class ProviderPolicyStore:
         _policy_text(actor)
         _policy_text(correlation_id)
         _validate_coordinate(coordinate)
-        if type(expected_revision) is not int or expected_revision < 0:
+        if (
+            type(expected_revision) is not int
+            or not 0 <= expected_revision <= MAX_POLICY_REVISION
+        ):
             raise ProviderPolicyInvalid("provider-policy-revision-invalid")
         digest = _command_digest(
             provider_id=self._provider_id,
@@ -650,18 +655,22 @@ class ProviderPolicyStore:
                     (self._provider_id, correlation_id),
                 ).fetchone()
                 if existing is not None:
+                    result = _command_from_row(existing)
                     if existing["request_digest"] == digest:
-                        return _command_from_row(existing)
-                    self._event(
-                        connection,
-                        event_kind=operation,
-                        actor=actor,
-                        correlation_id=correlation_id,
-                        outcome="conflict",
-                        code="policy-correlation-conflict",
-                        coordinate=coordinate,
-                    )
-                    conflict_code = "policy-correlation-conflict"
+                        if result.outcome in {"granted", "revoked"}:
+                            return result
+                        conflict_code = result.code
+                    else:
+                        self._event(
+                            connection,
+                            event_kind=operation,
+                            actor=actor,
+                            correlation_id=correlation_id,
+                            outcome="conflict",
+                            code="policy-correlation-conflict",
+                            coordinate=coordinate,
+                        )
+                        conflict_code = "policy-correlation-conflict"
                 else:
                     revision = self._revision(connection)
                     if expected_revision != revision:

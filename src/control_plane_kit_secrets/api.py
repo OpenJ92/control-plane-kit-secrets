@@ -37,6 +37,7 @@ from .provider_policy import (
     PolicyCoordinate,
     PolicyGrantPage,
     PolicyGrantRead,
+    MAX_POLICY_REVISION,
     ProviderGrantRecord,
     ProviderPolicyConflict,
     ProviderPolicyDenied,
@@ -108,7 +109,7 @@ class PolicyGrantRequest(BaseModel):
     workspace_id: str = Field(min_length=1, max_length=512)
     action: str = Field(min_length=1, max_length=512)
     intent: str | None = Field(default=None, max_length=512)
-    expected_revision: int = Field(ge=0)
+    expected_revision: int = Field(ge=0, le=MAX_POLICY_REVISION, strict=True)
     correlation_id: str = Field(min_length=1, max_length=MAX_CORRELATION_CHARS)
 
 
@@ -183,6 +184,7 @@ def create_app(
                 intent=request.intent,
             )
         except HTTPException as exc:
+            outcome, code = _authorization_failure_disposition(exc)
             _append_audit(
                 audit_store,
                 provider_id=provider_id,
@@ -192,8 +194,8 @@ def create_app(
                 intent=request.intent,
                 caller_subject=caller_subject,
                 correlation_id=correlation_id,
-                outcome="denied",
-                code="insufficient-scope",
+                outcome=outcome,
+                code=code,
             )
             raise exc
         try:
@@ -318,6 +320,7 @@ def create_app(
                 intent=generation_intent,
             )
         except HTTPException as exc:
+            outcome, code = _authorization_failure_disposition(exc)
             _append_audit(
                 audit_store,
                 provider_id=provider_id,
@@ -327,8 +330,8 @@ def create_app(
                 intent=generation_intent,
                 caller_subject=request.caller_subject,
                 correlation_id=request.correlation_id,
-                outcome="denied",
-                code="insufficient-scope",
+                outcome=outcome,
+                code=code,
             )
             raise exc
         try:
@@ -456,6 +459,7 @@ def create_app(
                 intent=request.intent,
             )
         except HTTPException as exc:
+            outcome, code = _authorization_failure_disposition(exc)
             _append_audit(
                 audit_store,
                 provider_id=provider_id,
@@ -465,8 +469,8 @@ def create_app(
                 intent=request.intent,
                 caller_subject=caller_subject,
                 correlation_id=correlation_id,
-                outcome="denied",
-                code="insufficient-scope",
+                outcome=outcome,
+                code=code,
             )
             raise exc
         try:
@@ -612,6 +616,7 @@ def create_app(
                 intent=request.intent,
             )
         except HTTPException as exc:
+            outcome, code = _authorization_failure_disposition(exc)
             _append_resolve_audit(
                 audit_store,
                 provider_id=provider_id,
@@ -621,8 +626,8 @@ def create_app(
                 intent=request.intent,
                 caller_subject=request.caller_subject,
                 correlation_id=request.correlation_id,
-                outcome="denied",
-                code="insufficient-scope",
+                outcome=outcome,
+                code=code,
             )
             raise exc
         try:
@@ -877,6 +882,7 @@ def create_app(
         request: PolicyGrantRequest,
         client: ProviderCredential = Depends(credential),
     ) -> dict[str, Any]:
+        _validate_policy_correlation(request.correlation_id)
         coordinate = _policy_coordinate(request)
         _require_policy_admin(
             policy_store, client, event_kind="grant",
@@ -906,6 +912,7 @@ def create_app(
         request: PolicyRevokeRequest,
         client: ProviderCredential = Depends(credential),
     ) -> dict[str, Any]:
+        _validate_policy_correlation(request.correlation_id)
         coordinate = _policy_coordinate(request)
         _require_policy_admin(
             policy_store, client, event_kind="revoke",
@@ -937,6 +944,7 @@ def create_app(
         correlation_id: str = Header(alias="X-Correlation-ID", max_length=MAX_CORRELATION_CHARS),
         client: ProviderCredential = Depends(credential),
     ) -> dict[str, Any]:
+        _validate_policy_correlation(correlation_id)
         _require_policy_admin(
             policy_store, client, event_kind="grant-read",
             correlation_id=correlation_id, grant_id=grant_id,
@@ -950,6 +958,10 @@ def create_app(
         except ProviderPolicyMissing as exc:
             raise _error(404, "missing", exc.code) from exc
         except ProviderPolicyInvalid as exc:
+            _record_policy_invalid(
+                policy_store, client, "grant-read", correlation_id, exc.code,
+                grant_id=grant_id,
+            )
             raise _error(400, "malformed", exc.code) from exc
         except ProviderPolicyUnavailable as exc:
             raise _error(503, "unavailable", "provider-policy-unavailable") from exc
@@ -966,6 +978,7 @@ def create_app(
         after_grant_id: str | None = None,
         client: ProviderCredential = Depends(credential),
     ) -> dict[str, Any]:
+        _validate_policy_correlation(correlation_id)
         _require_policy_admin(
             policy_store, client, event_kind="grant-list",
             correlation_id=correlation_id,
@@ -996,6 +1009,7 @@ def create_app(
         correlation_id: str = Header(alias="X-Correlation-ID", max_length=MAX_CORRELATION_CHARS),
         client: ProviderCredential = Depends(credential),
     ) -> dict[str, Any]:
+        _validate_policy_correlation(correlation_id)
         _require_policy_admin(
             policy_store, client, event_kind="command-read",
             correlation_id=correlation_id,
@@ -1009,6 +1023,9 @@ def create_app(
         except ProviderPolicyMissing as exc:
             raise _error(404, "missing", exc.code) from exc
         except ProviderPolicyInvalid as exc:
+            _record_policy_invalid(
+                policy_store, client, "command-read", correlation_id, exc.code,
+            )
             raise _error(400, "malformed", exc.code) from exc
         except ProviderPolicyUnavailable as exc:
             raise _error(503, "unavailable", "provider-policy-unavailable") from exc
@@ -1028,6 +1045,17 @@ def _policy_coordinate(request: PolicyGrantRequest) -> PolicyCoordinate:
         action=request.action,
         intent=request.intent,
     )
+
+
+def _validate_policy_correlation(correlation_id: str) -> None:
+    if (
+        not correlation_id.strip()
+        or any(
+            ord(character) < 0x20 or ord(character) == 0x7F
+            for character in correlation_id
+        )
+    ):
+        raise _error(400, "malformed", "provider-policy-correlation-invalid")
 
 
 def _require_policy_admin(
@@ -1094,9 +1122,7 @@ def _record_policy_invalid(
                 code=code,
                 outcome="malformed",
             )
-        except ProviderPolicyInvalid:
-            return
-        except ProviderPolicyUnavailable as exc:
+        except (ProviderPolicyInvalid, ProviderPolicyUnavailable) as exc:
             raise _error(503, "unavailable", "provider-policy-unavailable") from exc
     except ProviderPolicyUnavailable as exc:
         raise _error(503, "unavailable", "provider-policy-unavailable") from exc
@@ -1237,6 +1263,17 @@ def _require(
         raise _error(400, "malformed", exc.code) from exc
     except ProviderPolicyUnavailable as exc:
         raise _error(503, "unavailable", "provider-policy-unavailable") from exc
+
+
+def _authorization_failure_disposition(exc: HTTPException) -> tuple[str, str]:
+    detail = exc.detail
+    if (
+        not isinstance(detail, dict)
+        or detail.get("outcome") not in {"denied", "malformed", "unavailable"}
+        or not isinstance(detail.get("code"), str)
+    ):
+        return "unavailable", "provider-policy-unavailable"
+    return detail["outcome"], detail["code"]
 
 
 def _append_resolve_audit(

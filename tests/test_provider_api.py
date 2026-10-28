@@ -4,7 +4,10 @@ import base64
 import os
 import tempfile
 import unittest
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
+from threading import Event
+from unittest.mock import patch
 
 from fastapi.testclient import TestClient
 from cryptography.hazmat.primitives import serialization
@@ -853,6 +856,45 @@ class ProviderApiTests(unittest.TestCase):
             )
             self.assertEqual(conflict.status_code, 409)
 
+            rejected = (
+                ("/v1/provider-policy/grants", {
+                    **request, "subject": "stale-client",
+                    "correlation_id": "stale-command",
+                }),
+                ("/v1/provider-policy/grants", {
+                    **request, "correlation_id": "active-command",
+                    "expected_revision": 2,
+                }),
+                ("/v1/provider-policy/grants/unknown-grant/revoke", {
+                    **request, "correlation_id": "invalid-revoke",
+                    "expected_revision": 2,
+                }),
+            )
+            for path, rejected_request in rejected:
+                with self.subTest(rejected_command=rejected_request["correlation_id"]):
+                    first_rejection = fixture.client.post(
+                        path, headers=fixture.headers("admin-token"),
+                        json=rejected_request,
+                    )
+                    replayed_rejection = fixture.client.post(
+                        path, headers=fixture.headers("admin-token"),
+                        json=rejected_request,
+                    )
+                    self.assertEqual(first_rejection.status_code, 409)
+                    self.assertEqual(replayed_rejection.status_code, 409)
+                    self.assertEqual(replayed_rejection.json(), first_rejection.json())
+
+            for invalid_revision in (1 << 63, "2", 2.0, True):
+                with self.subTest(invalid_revision=repr(invalid_revision)):
+                    invalid = fixture.client.post(
+                        "/v1/provider-policy/grants",
+                        headers=fixture.headers("admin-token"),
+                        json={**request, "correlation_id": "invalid-revision",
+                              "expected_revision": invalid_revision},
+                    )
+                    self.assertEqual(invalid.status_code, 422)
+            self.assertEqual(fixture.policy_store.current_revision(), 2)
+
             command = fixture.client.get(
                 "/v1/provider-policy/commands/grant-metadata-a",
                 headers={**fixture.headers("admin-token"), "X-Correlation-ID": "read-command-a"},
@@ -873,6 +915,30 @@ class ProviderApiTests(unittest.TestCase):
                              "X-Correlation-ID": "read-command-denied"},
                 )
                 self.assertEqual(lost_admin.status_code, 403)
+                lost_admin_replay = rebuilt.post(
+                    "/v1/provider-policy/grants",
+                    headers={"Authorization": "Bearer admin-token"},
+                    json=request,
+                )
+                self.assertEqual(lost_admin_replay.status_code, 403)
+
+            invalid_read = fixture.client.get(
+                "/v1/provider-policy/grants/%20",
+                headers={**fixture.headers("admin-token"),
+                         "X-Correlation-ID": "invalid-grant-read"},
+            )
+            self.assertEqual(invalid_read.status_code, 400)
+            self.assertIn(
+                ("grant-read", "malformed", "provider-policy-invalid"),
+                fixture.policy_events(),
+            )
+            before_invalid_correlation = len(fixture.policy_events())
+            unusable_correlation = fixture.client.get(
+                "/v1/provider-policy/grants",
+                headers={**fixture.headers("admin-token"), "X-Correlation-ID": "   "},
+            )
+            self.assertEqual(unusable_correlation.status_code, 400)
+            self.assertEqual(len(fixture.policy_events()), before_invalid_correlation)
             listed = fixture.client.get(
                 "/v1/provider-policy/grants?limit=1&intent_mode=none",
                 headers={**fixture.headers("admin-token"), "X-Correlation-ID": "list-a"},
@@ -948,6 +1014,7 @@ class ProviderApiTests(unittest.TestCase):
                 ("secret.metadata", None),
             )
             revision = 1
+            grants = []
             for index, (action, intent) in enumerate(cases):
                 response = fixture.client.post(
                     "/v1/provider-policy/grants",
@@ -960,8 +1027,89 @@ class ProviderApiTests(unittest.TestCase):
                     },
                 )
                 self.assertEqual(response.status_code, 200, response.text)
+                grants.append((response.json()["grant_id"], action, intent))
                 revision += 1
             fixture.assert_all_dynamic_action_paths_authorized()
+            for index, (grant_id, action, intent) in enumerate(grants):
+                revoked = fixture.client.post(
+                    f"/v1/provider-policy/grants/{grant_id}/revoke",
+                    headers=fixture.headers("admin-token"),
+                    json={
+                        "subject": "dynamic-client", "workspace_id": "workspace-1",
+                        "action": action, "intent": intent,
+                        "expected_revision": revision,
+                        "correlation_id": f"revoke-action-{index}",
+                    },
+                )
+                self.assertEqual(revoked.status_code, 200, revoked.text)
+                revision += 1
+            fixture.assert_all_dynamic_action_paths_denied()
+
+    def test_admitted_request_can_finish_after_revoke_but_later_checks_deny(self) -> None:
+        with _policy_client() as fixture:
+            fixture.store.create_secret(
+                workspace_id="workspace-1", secret_id="in-flight", value=b"retained"
+            )
+            grant = fixture.client.post(
+                "/v1/provider-policy/grants",
+                headers=fixture.headers("admin-token"),
+                json={
+                    "subject": "dynamic-client", "workspace_id": "workspace-1",
+                    "action": "secret.metadata", "intent": None,
+                    "expected_revision": 1, "correlation_id": "grant-in-flight",
+                },
+            ).json()
+            entered = Event()
+            release = Event()
+            original = fixture.store.metadata
+
+            def delayed_metadata(**kwargs):
+                entered.set()
+                self.assertTrue(release.wait(5), "metadata request was not released")
+                return original(**kwargs)
+
+            path = "/v1/workspaces/workspace-1/secrets/in-flight/metadata"
+            with patch.object(fixture.store, "metadata", side_effect=delayed_metadata):
+                with ThreadPoolExecutor(max_workers=1) as executor:
+                    admitted = executor.submit(
+                        fixture.client.get, path,
+                        headers=fixture.headers("dynamic-token"),
+                    )
+                    self.assertTrue(entered.wait(5), "request was not admitted")
+                    revoked = fixture.client.post(
+                        f"/v1/provider-policy/grants/{grant['grant_id']}/revoke",
+                        headers=fixture.headers("admin-token"),
+                        json={
+                            "subject": "dynamic-client", "workspace_id": "workspace-1",
+                            "action": "secret.metadata", "intent": None,
+                            "expected_revision": 2, "correlation_id": "revoke-in-flight",
+                        },
+                    )
+                    self.assertEqual(revoked.status_code, 200, revoked.text)
+                    release.set()
+                    self.assertEqual(admitted.result().status_code, 200)
+            self.assertEqual(
+                fixture.client.get(path, headers=fixture.headers("dynamic-token")).status_code,
+                403,
+            )
+
+    def test_policy_unavailable_is_not_a_false_scope_denial(self) -> None:
+        with _policy_client() as fixture:
+            with patch.object(
+                fixture.policy_store, "require_active",
+                side_effect=provider_policy.ProviderPolicyUnavailable(),
+            ):
+                response = fixture.client.post(
+                    "/v1/workspaces/workspace-1/secrets/unavailable",
+                    headers=fixture.headers("dynamic-token"),
+                    json={"value_base64": _b64(b"value"), "intent": "postgres.password",
+                          "correlation_id": "policy-unavailable"},
+                )
+            self.assertEqual(response.status_code, 503)
+            self.assertIn(
+                ("unavailable", "provider-policy-unavailable"),
+                {(row["outcome"], row["code"]) for row in fixture.audit_rows()},
+            )
 
 
 class _ApiFixture:
@@ -979,6 +1127,7 @@ class _ApiFixture:
             encoding="utf-8",
         )
         database = base / "secrets.sqlite3"
+        self.database = database
         selected_credentials = credentials if credentials is not None else _default_credentials()
         store, real_audit_store = admit_provider_custody(
             database,
@@ -1078,6 +1227,7 @@ class _PolicyApiFixture:
             ),
         )
         database = base / "secrets.sqlite3"
+        self.database = database
         self.store, self.audit_store = admit_provider_custody(
             database, master_key=key, provider_id="provider-a",
             credentials=self.credentials,
@@ -1116,6 +1266,22 @@ class _PolicyApiFixture:
                 self.store, self.audit_store, credentials, self.policy_store,
             ),
         ))
+
+    def policy_events(self) -> list[tuple[str, str, str]]:
+        import sqlite3
+        from contextlib import closing
+
+        with closing(sqlite3.connect(self.database)) as connection:
+            return [
+                (str(row[0]), str(row[1]), str(row[2]))
+                for row in connection.execute(
+                    "SELECT event_kind, outcome, code FROM provider_policy_events "
+                    "ORDER BY occurred_at, event_id"
+                ).fetchall()
+            ]
+
+    def audit_rows(self) -> list[dict[str, object]]:
+        return self.audit_store.rows_for_tests()
 
     def assert_all_dynamic_action_paths_authorized(self) -> None:
         write = self.client.post(
@@ -1192,6 +1358,47 @@ class _PolicyApiFixture:
             headers=self.headers("dynamic-token"),
         )
         assert metadata.status_code == 200, metadata.text
+
+    def assert_all_dynamic_action_paths_denied(self) -> None:
+        responses = (
+            self.client.post(
+                "/v1/workspaces/workspace-1/secrets/write-denied",
+                headers=self.headers("dynamic-token"),
+                json={"value_base64": _b64(b"write"), "intent": "postgres.password"},
+            ),
+            self.client.post(
+                "/v1/workspaces/workspace-1/delegation-keys/generated-denied/generate",
+                headers=self.headers("dynamic-token"),
+                json={
+                    "secret_reference": "secret://workspace-secrets/keys/generated-denied",
+                    "purpose": "gateway-probe", "issuer": "cpk-server",
+                    "caller_subject": "dynamic-client",
+                    "correlation_id": "generate-denied",
+                },
+            ),
+            self.client.post(
+                "/v1/workspaces/workspace-1/secrets/rotate-target/rotate",
+                headers=self.headers("dynamic-token"),
+                json={"value_base64": _b64(b"again"), "intent": "postgres.password"},
+            ),
+            self.client.post(
+                "/v1/workspaces/workspace-1/secrets/resolve-target/resolve",
+                headers=self.headers("dynamic-token"),
+                json={
+                    "intent": "postgres.password", "caller_subject": "dynamic-client",
+                    "correlation_id": "resolve-denied",
+                },
+            ),
+            self.client.post(
+                "/v1/workspaces/workspace-1/secrets/revoke-target/revoke",
+                headers=self.headers("dynamic-token"), json={},
+            ),
+            self.client.get(
+                "/v1/workspaces/workspace-1/secrets/metadata-target/metadata",
+                headers=self.headers("dynamic-token"),
+            ),
+        )
+        assert [response.status_code for response in responses] == [403] * 6
 
 
 def _policy_client() -> _PolicyApiFixture:

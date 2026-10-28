@@ -3,7 +3,7 @@ Maintain this document alongside its source file. When the source or relevant im
 
 These temporary-SQLite tests exercise real provider custody and encryption, not mocked encryption or deployed provider acceptance. They cover explicit missing-versus-empty policy seed admission, exact v1-to-v2 migration and rollback, token-free exact seed/no-resurrection, the closed policy-event vocabulary and truthful grantless failure shape, restart, provider/key/schema binding, concurrent admission and initialization rollback, protected bootstrap-key reads, ciphertext/metadata tampering, version rotation, whole-reference and exact-version revocation, and correlation-pinned resolution.
 
-The #71 cases exercise durable grant/revoke/regrant commands, exact replay and changed-correlation conflict, monotonic revision checks, exact authorization, audited exact/list/command reads, cursor pagination, event-failure rollback and concurrent writers. They assert transaction outcomes rather than a scheduling winner.
+The #71 cases exercise durable grant/revoke/regrant commands, no-write success and conflict replay, changed-correlation conflict events, signed-64-bit revision bounds, stale old-identity revoke after regrant, reconstruction persistence, exact authorization, audited exact/list/command reads, cursor pagination, event-failure rollback and concurrent writers. They assert transaction outcomes rather than a scheduling winner.
 
 Thread/barrier cases assert serialized version allocation, a single selection for the same correlation, and coherent resolve-versus-revoke outcomes. They do not promise a particular scheduling winner. Exact-version replay preserves siblings and records replay audit; resolution replay remains pinned across rotation and cannot bypass revocation.
 

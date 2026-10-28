@@ -9,6 +9,8 @@ The provider exposes secret write, rotate, resolve, revoke, exact-version revoke
 
 Request caller_subject is supplied audit/correlation context, not another authenticated identity. Credential grants authorize the action. Write/rotate canonicalize the intent label; resolution requires matching durable intent. Generation has a distinct permission and derives intent from the local signing-family map. Revocation requires secret.revoke.
 
+Policy command revisions are strict signed-64-bit JSON integers. A usable policy correlation is required before policy audit; whitespace/control-only correlations reject without inventing a durable identity. With a usable correlation, invalid exact/list/command reads append a bounded malformed event or fail unavailable rather than silently swallowing required audit. Secret-action audit preserves durable-policy denial, malformed and unavailable categories. Authorization linearizes at the exact durable check: a request admitted before a later revoke may finish, while checks begun afterward deny.
+
 ## Disclosure and transaction limits
 
 Only authorized resolve deliberately returns recoverable material as value_base64; base64 is not redaction. Other successful responses contain metadata or public key identity. Metadata includes labels and key fingerprint/version, so it is not a universal safe-publication surface.

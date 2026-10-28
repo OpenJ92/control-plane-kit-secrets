@@ -149,6 +149,12 @@ class EncryptedSecretStoreTests(unittest.TestCase):
                     actor="different-admin", correlation_id="command-grant-a",
                     expected_revision=1, coordinate=coordinate,
                 )
+            with closing(sqlite3.connect(paths["db"])) as connection:
+                self.assertEqual(connection.execute(
+                    "SELECT COUNT(*) FROM provider_policy_events "
+                    "WHERE correlation_id = ? AND code = ?",
+                    ("command-grant-a", "policy-correlation-conflict"),
+                ).fetchone()[0], 1)
             self.assertEqual(policy.current_revision(), 2)
             self.assertEqual(
                 policy.read_command(
@@ -169,7 +175,33 @@ class EncryptedSecretStoreTests(unittest.TestCase):
                 )
             self.assertEqual(stale.exception.result.code, "policy-revision-conflict")
             self.assertEqual(stale.exception.result.resulting_revision, 2)
+            before_stale_replay = _logical_snapshot(paths["db"])
+            with self.assertRaises(provider_policy.ProviderPolicyConflict) as stale_replay:
+                policy.grant(
+                    actor="admin-a", correlation_id="command-stale",
+                    expected_revision=1,
+                    coordinate=coordinate_type(
+                        subject="client-b", workspace_id="workspace-a",
+                        action="secret.metadata", intent=None,
+                    ),
+                )
+            self.assertEqual(stale_replay.exception.result, stale.exception.result)
+            self.assertEqual(before_stale_replay, _logical_snapshot(paths["db"]))
             self.assertEqual(policy.current_revision(), 2)
+
+            with self.assertRaises(provider_policy.ProviderPolicyConflict) as active:
+                policy.grant(
+                    actor="admin-a", correlation_id="command-active",
+                    expected_revision=2, coordinate=coordinate,
+                )
+            before_active_replay = _logical_snapshot(paths["db"])
+            with self.assertRaises(provider_policy.ProviderPolicyConflict) as active_replay:
+                policy.grant(
+                    actor="admin-a", correlation_id="command-active",
+                    expected_revision=2, coordinate=coordinate,
+                )
+            self.assertEqual(active_replay.exception.result, active.exception.result)
+            self.assertEqual(before_active_replay, _logical_snapshot(paths["db"]))
 
             revoked = policy.revoke(
                 actor="admin-a", correlation_id="command-revoke-a",
@@ -187,12 +219,45 @@ class EncryptedSecretStoreTests(unittest.TestCase):
             )
             self.assertNotEqual(regranted.grant_id, granted.grant_id)
             self.assertEqual(regranted.resulting_revision, 4)
+            with self.assertRaises(provider_policy.ProviderPolicyConflict) as stale_revoke:
+                policy.revoke(
+                    actor="admin-a", correlation_id="command-stale-revoke",
+                    expected_revision=4, grant_id=granted.grant_id,
+                    coordinate=coordinate,
+                )
+            self.assertEqual(
+                stale_revoke.exception.result.code, "provider-grant-revoke-conflict"
+            )
+            self.assertEqual(policy.current_revision(), 4)
+
+            reconstructed = policy_store_type(paths["db"], provider_id="provider-a")
+            self.assertEqual(reconstructed.current_revision(), 4)
+            self.assertEqual(
+                reconstructed.read_command(
+                    actor="admin-a", audit_correlation_id="read-regrant",
+                    command_correlation_id="command-regrant-a",
+                ),
+                regranted,
+            )
+            old = reconstructed.read_grant(
+                actor="admin-a", audit_correlation_id="read-old-grant",
+                grant_id=granted.grant_id,
+            )
+            self.assertIsNotNone(old.grant.revoked_at)
             policy.require_active(coordinate)
             with self.assertRaises(provider_policy.ProviderPolicyDenied):
                 policy.require_active(coordinate_type(
                     subject="client-a", workspace_id="workspace-a",
                     action="secret.resolve", intent="oci.pull-credential",
                 ))
+
+            before_overflow = _logical_snapshot(paths["db"])
+            with self.assertRaises(provider_policy.ProviderPolicyInvalid):
+                policy.grant(
+                    actor="admin-a", correlation_id="revision-overflow",
+                    expected_revision=1 << 63, coordinate=coordinate,
+                )
+            self.assertEqual(before_overflow, _logical_snapshot(paths["db"]))
 
     def test_policy_reads_are_bounded_audited_and_current_snapshot_pages(self) -> None:
         policy_store_type = getattr(provider_policy, "ProviderPolicyStore", None)
