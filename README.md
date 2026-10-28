@@ -9,17 +9,18 @@ Interpreters may resolve and materialize values at the IO boundary.
 `control-plane-kit-secrets` stores encrypted secret values, versions and revokes
 them, and audits provider-local access.
 
-Current status: provider-local audit. #1166 added provider-local encrypted
-records, versions, rotation, revocation, and tamper-safe load behavior. #1167
-added a narrow FastAPI boundary for authenticated write, resolve, rotate,
-revoke, and metadata operations. #1168 adds provider-local audit records and
-fail-closed resolve behavior when audit persistence is unavailable.
+Current status: encrypted provider-local custody, bounded audit, and durable
+exact provider policy. The provider authenticates bootstrap credentials, then
+authorizes each secret action from current durable subject/workspace/action/
+intent-or-none grants. Separately admitted policy administrators can grant,
+revoke, inspect, and reconcile that policy without restarting the application.
 
 ## Delegation Key Generation
 
 The provider owns a closed set of Ed25519 generation operations for gateway
-probe, gateway node-control transit, and workload node-control delegation. A
-caller supplies only bounded identity and correlation metadata:
+probe, gateway node-control transit, workload node-control, workload
+node-control surface-read, gateway health-read transit, and workload health-read
+delegation. A caller supplies only bounded identity and correlation metadata:
 
 ```text
 workspace + SecretReference + admitted purpose + issuer + correlation
@@ -36,6 +37,23 @@ different semantics, substituting an intent, or drifting authenticated family
 metadata fails closed, and a revoked generated reference cannot be replayed
 into service. Compact profile construction and signing remain outside this
 provider.
+
+The newly adopted surface-read and health families use exactly these pairs:
+
+| Purpose | Resolution intent |
+| --- | --- |
+| `workload-node-control-surface-read` | `gateway.probe-signing-key` |
+| `gateway-node-health-read-transit` | `gateway.node-health-read-transit-signing-key` |
+| `workload-node-health-read` | `workload.node-health-read-signing-key` |
+
+Surface read intentionally reuses the legacy gateway probe signing intent. It
+does not create a new secret-use intent or broaden the other admitted families.
+
+Generation and resolution still require separate exact durable
+action/workspace/intent grants. Existing scoped write/rotate also admit these
+intent values under their own exact grants. Wildcards are not durable policy.
+This provider support does not authorize Operations health-key generation or
+construct/sign health requests.
 
 ## Exact Version Revocation
 
@@ -79,8 +97,168 @@ Production provider credentials are loaded from the absolute owner-only path in
 fixtures; configure exactly one source. Provider credentials are bootstrap
 roots and must not resolve recursively through this provider.
 
-The provider stores only key fingerprint and key-version evidence in the
-database. It does not store the raw master key. Future key rotation should add
+Both sources accept a UTF-8 JSON array bounded to 64 KiB of encoded bytes. Each
+credential requires `subject` and `token`; optional `grants` defaults to `[]`.
+Credential grants are one-time seed input, not runtime authority. Each seed
+grant requires an exact supported `action` and exact `workspace_id`.
+Intent-qualified actions require explicit exact supported `intents`; intentless
+actions use an empty list. When constructing the one-time seed for fresh custody
+or exact v1 migration, wildcards, unknown actions/intents, and ambiguous
+same-subject seed sets fail admission. A retained v2 restart verifies the stored
+immutable seed and never revalidates or reapplies current credential `grants` as
+authority. An empty credential array authenticates nobody, and empty grants seed
+no secret-use authority.
+
+Optional credential `capabilities` is a separate closed bootstrap list. Its
+only admitted value is `secrets.policy-admin`. This capability authorizes the
+policy administration routes but confers no secret-use grant, and no durable
+grant can create it. Removing the last administrator is an operator recovery
+condition. Credential/capability changes are read when the application is
+reconstructed; no hot reload is claimed.
+
+All these fields and intent entries must be strings, not whitespace-only, and
+contain no C0 (`U+0000..U+001F`) or DEL (`U+007F`) controls. Tokens must also be
+ASCII with no leading/trailing whitespace; internal spaces are accepted. Accepted
+text is preserved exactly, without coercion or normalization. There is no
+independent token or collection size limit beyond the document ceiling. Duplicate
+JSON keys, unknown credential/grant fields, unknown capabilities, duplicate
+capabilities, and duplicate bearer tokens reject.
+Distinct tokens may share a subject; repeated grants/intents remain lawful.
+These are document-loader rules; programmatic auth constructors are unchanged.
+
+Unset the unused credential source. Existing empty-value behavior is preserved:
+a valid file with empty development JSON selects the file; an empty file setting
+with nonempty development JSON rejects. Both nonempty or both absent/empty reject.
+
+Startup requires the explicit absolute path in
+`CPK_WRAPPER_CONFIGURATION_FILE`. This separate public JSON input uses the Core
+`ReceiverNodeControlConfiguration` profile `workload-node-control-configuration.v2`:
+workspace/runtime/node/socket/receiver identity, the exact V2 liveness declaration
+on socket `control`, and separate surface/health issuer and public-key families.
+Graph authority stays in each signed request. The byte ceiling is 64 KiB; the path
+ceiling is 4096 UTF-8 bytes. No default or disable fallback is provided. The
+public reader checks the opened regular file, uses no-follow/nonblocking flags,
+requires mode0444 and unchanged opened-file metadata across the read. The old
+Secrets setting and configuration profile are not fallbacks. Trusted parent-path integrity
+and authorized delivery remain the caller's responsibility.
+
+The complete ordinary FastAPI host and actual SDK routes are admitted before
+the one delayed initializer reads existing private master-key/credential inputs
+and opens custody. Missing or invalid public configuration exits with
+`secret provider control configuration is invalid`; real SDK namespace collision
+also fails before private reads or custody. Invalid private configuration still
+exits with `secret provider configuration is invalid`. These public and private
+loaders remain separate, with their own fixed outward errors.
+
+Standalone launchers supply their trusted absolute public path. Server product
+adoption belongs to Servers #237 and must deliver the shared artifact and common
+path environment while retaining private inputs, data lifecycle and port/UID policy.
+This package enforces the Secrets declaration over the shared Core codec; it is
+not a product artifact factory. The actual SDK wrapper supplies protected surface
+reads (V2 requests/grants, V3 results) and V2 liveness. No readiness, variables,
+commands or private-provider permissions are granted by this configuration.
+
+The provider then admits custody under one explicit SQLite transaction. Fresh or
+positively object-free storage receives the complete v2 custody/audit/policy
+schema, exact immutable seed, and one authenticated root-key/provider/schema
+binding together. An exact v1 retained store is migrated to v2 atomically after
+its old binding and schema are authenticated; migration failure preserves the
+exact prior committed state. A retained v2 store must match the exact required
+schema, binding, provider and immutable seed digest before the app can become
+ready. Compatible restart performs no logical schema or row writes and never
+unions configured seed grants back over durable revocations.
+The effective provider ID is a bounded nonblank value compared exactly; omission
+defaults to `local-dev-provider`. Credential documents remain independently
+configurable bootstrap inputs.
+
+Existing unbound databases and inexact legacy schemas are refused unchanged;
+there is no unbound-data adoption. Wrong key/provider, binding tamper or schema
+mismatch exits with `secret provider custody is incompatible`. Unresolved
+SQLite locking, recovery or transaction failure exits with `secret provider custody
+is unavailable`. Both errors suppress underlying sensitive details; neither causes
+an internal retry, repair, reset or rekey. A later explicit start inspects current
+committed truth before deciding. Concurrent starts serialize at admission and
+cannot establish conflicting committed identities.
+
+This supports ordinary local regular SQLite files and rejects observed symlink or
+nonregular targets. Logical no-write does not mean byte-identical journal files or
+protection against hostile filesystem replacement. Startup checks the binding and
+schema, not every retained ciphertext; resolution still authenticates individual
+secret rows. Direct store APIs retain their existing behavior and do not claim
+provider startup admission. No new status endpoint exposes binding/key evidence.
+
+## Durable Provider Policy Administration
+
+Policy administration uses the independently authenticated
+`secrets.policy-admin` credential capability. Authentication details are omitted
+from these synthetic examples. Endpoint, credential, actor, provider ID, and
+arbitrary method fields are not part of the supported public request contract
+and cannot select transport, credentials, provider identity, or authenticated
+actor authority.
+
+Grant one exact tuple at the currently observed policy revision:
+
+```http
+POST /v1/provider-policy/grants
+Content-Type: application/json
+
+{
+  "subject": "workspace-agent-a",
+  "workspace_id": "workspace-a",
+  "action": "secret.resolve",
+  "intent": "postgres.password",
+  "expected_revision": 1,
+  "correlation_id": "policy-command-001"
+}
+```
+
+The bounded result includes the new grant identity, operation, full nonsecret
+tuple, expected/resulting revisions, authenticated provider-client subject,
+outcome/code, correlation, and occurrence time. Revoke rechecks both that exact
+identity and tuple:
+
+```http
+POST /v1/provider-policy/grants/{grant_id}/revoke
+Content-Type: application/json
+
+{
+  "subject": "workspace-agent-a",
+  "workspace_id": "workspace-a",
+  "action": "secret.resolve",
+  "intent": "postgres.password",
+  "expected_revision": 2,
+  "correlation_id": "policy-command-002"
+}
+```
+
+`GET /v1/provider-policy/grants/{grant_id}` reads one exact record. The bounded
+current list supports exact subject/workspace/action filters, explicit intent
+mode `any`, `none`, or `exact`, limit 1–100, and an `after_grant_id` cursor. Both
+require a separate bounded `X-Correlation-ID` for their policy event. To
+reconcile a lost mutation response without redispatching it, use:
+
+```http
+GET /v1/provider-policy/commands/policy-command-001
+X-Correlation-ID: policy-read-001
+```
+
+Grant/revoke atomically records the row change, monotonic signed-64-bit policy
+revision, canonical command result, and bounded event. Exact correlation replay
+returns the original success or conflict without writes. Changed reuse,
+stale revision, active duplicate, or stale/incorrect revoke conflicts without
+changing authority. Regrant after revocation creates a new grant identity; the
+old identity cannot revoke it. Reads append their required event in the same
+SQLite transaction before returning data.
+
+If a provider response is lost, read the exact correlation result before any
+new mutation; do not blindly retry or infer rollback. A committed revoke denies
+authorization checks begun afterward, but does not cancel a request already
+admitted. Responses and history contain no bearer values, secret material,
+protected credential document, or private replay digest.
+
+Secret-version rows record key fingerprint and key-version evidence; the custody
+binding separately authenticates provider/schema identity. Neither stores the raw
+master key. Future key rotation should add
 an explicit rewrap or new-version flow; it must not silently change the key used
 to decrypt existing ciphertext.
 
@@ -121,6 +299,28 @@ descriptors, Dockerfiles, OCI image publication, or Cloudflare/Docker
 interpreter behavior.
 
 ## Validation
+
+The runtime dependency profile explicitly installs Core
+`f1e6cf2420bf2ec381aab745f462d4e64baef5fc` and server SDK `[fastapi]`
+`22f1267bde5015efe2fea4f07be4ce8ddf83bc0c` from commit archives. The shared profile
+uses cryptography 50.0.0, PyJWT 2.13.0, FastAPI 0.141.1 and Starlette 1.6.0.
+Core is now an explicit runtime dependency; the prior test-only Core pin has
+been removed. Direct Core imports are confined to the public protocol owner
+`control.py`; custody, signing and other provider owners remain Core-free, and
+the package root stays lightweight. Existing closed signing families and
+custody/auth/audit behavior remain the provider's contracts.
+
+Production now requires the public receiver and installs authenticated SDK static
+and liveness routes. Programmatic `api.create_app` callers supply required
+`control` plus `initialize_provider`, returning the existing store/audit pair and
+admitted provider credentials plus the provider-bound durable policy store.
+Every handler is bound before the app returns.
+SDK reads use separate typed authority and perform no provider authentication,
+secret access or audit writes. Liveness means the initialized process is serving;
+neither it nor the unchanged constant legacy readiness response proves current
+database writability. No readiness callback or mutable variable is advertised.
+See the [#26 law and decision record](docs/learning/runtime-control/secrets-26.md)
+and the retained [#25 dependency checkpoint](docs/learning/runtime-control/secrets-25.md).
 
 Run:
 

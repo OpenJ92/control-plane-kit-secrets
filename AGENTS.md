@@ -72,6 +72,61 @@ This repository owns durable secret custody for Control Plane Kit. It is a
 separate security boundary from operations, interpreters, cpk-server, and server
 product publication.
 
+## Implementation Companions
+
+Read `docs/implementation/README.md` and relevant source-path companions before
+changing an owner. Verify actual source and selected contract-bearing imports;
+the prose is navigation, not authority. UPDATE affected notes in the same
+change, including source creates/moves/removals and adopted dependency changes.
+Search consumers rather than assuming selected reverse links are exhaustive.
+
+Review the actual source/dependency diff and record one companion disposition
+in the existing PR log; unchanged meaning needs no manufactured edit. Bring
+newly touched pending files current without blocking unrelated rollout work.
+Use source-aware peer review for custody/auth/redaction claims, not a new
+report, timestamp/hash ledger or CI gate. No companion authorizes credential
+access, custody mutation or retry of an uncertain effect.
+
+## Source Trace Before Design
+
+Inspect governing tests and extract the applicable behavioral laws before the
+source dry run. Before proposing an interface, implementation plan, or issue
+split, read the consuming entrypoint, relevant imports, and exact dependency
+coordinates it selects. Trace input through transformations, authority checks,
+external effects, and output or durable history, with a few function/file
+anchors. Include failure, uncertainty, and replay where they affect the path.
+
+Distinguish selected behavior, newer merged but unselected code, proposed
+changes, and independently observed live evidence. A merge or unrelated green
+gate does not prove adoption. State the last working boundary and smallest
+missing connection; reuse existing owners rather than inventing prerequisites
+for an untraced gap or reviving a legacy fallback. Keep the explanation in the
+existing issue/PR decision log, not a new report system. Design the target
+interface and tests from that trace while preserving the governing laws.
+
+### Source Traversal Cadence
+
+Do substantial source traversal at decision points, not on every turn:
+
+- At parent-to-child issue design, trace the relevant computation to establish
+  ownership, missing connections, and child boundaries. Record source anchors,
+  selected dependency versions, and remaining unknowns in the existing issue.
+- At child implementation planning, reuse that recorded trace, confirm the
+  selected source and dependencies, and inspect the child's affected path.
+  Do not repeat an unchanged full traversal. If no usable trace exists, create
+  the relevant trace within this planning step.
+- During implementation and review, reread affected paths when source or selected
+  dependencies change, a failure contradicts the trace, or a review finding
+  exposes an unknown. Expand the traversal only as far as needed to resolve it,
+  and update the existing record with the changed understanding.
+
+Routine status updates, commits, CI notifications, handoffs, and documentation
+edits do not independently require a full traversal. Reviewers still inspect
+changed code and relevant boundaries independently; they need not repeat the
+implementer's entire trace. This cadence does not waive required tests, security
+review, or approval boundaries. Reuse evidence, not unverified assumptions; do
+not add a separate report, gate, or approval round for the traversal itself.
+
 ## Ownership
 
 This repository may own:

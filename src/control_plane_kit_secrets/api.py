@@ -4,18 +4,22 @@ import base64
 import binascii
 from hashlib import sha256
 import re
-from typing import Any
+import time
+from typing import Any, Callable
 from urllib.parse import urlsplit
 
-from fastapi import Depends, FastAPI, Header, HTTPException
-from pydantic import BaseModel, Field
+from fastapi import Depends, FastAPI, Header, HTTPException, Request
+from fastapi.exception_handlers import request_validation_exception_handler
+from fastapi.exceptions import RequestValidationError
+from fastapi.responses import JSONResponse
+from pydantic import BaseModel, ConfigDict, Field
+from control_plane_kit_server_sdk.fastapi import install_cpk_wrapper
 
 from .audit import AuditUnavailable, SqliteAuditStore, audit_record
 from .auth import (
     ProviderAuthenticationError,
     ProviderAuthorizer,
     ProviderCredential,
-    SecretUseDenied,
 )
 from ._delegation_signing import delegation_signing_intent_for
 from .models import (
@@ -30,7 +34,26 @@ from .models import (
     SecretTampered,
     SecretVersionRevocationConflict,
 )
+from .provider_policy import (
+    ALLOWED_SECRET_USE_INTENTS,
+    PolicyCommandResult,
+    PolicyCoordinate,
+    PolicyGrantPage,
+    PolicyGrantRead,
+    MAX_POLICY_REVISION,
+    ProviderGrantRecord,
+    ProviderPolicyConflict,
+    ProviderPolicyDenied,
+    ProviderPolicyInvalid,
+    ProviderPolicyMissing,
+    ProviderPolicyStore,
+    ProviderPolicyUnavailable,
+)
 from .store import EncryptedSecretStore
+from .control import (
+    ReceiverNodeControlConfiguration,
+    require_secrets_control_configuration,
+)
 
 
 MAX_SECRET_BYTES = 64 * 1024
@@ -39,24 +62,10 @@ MAX_SECRET_REFERENCE_CHARS = 1024
 _IDENTIFIER = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:-]{0,199}$")
 _REFERENCE_PROVIDER = re.compile(r"^[a-z][a-z0-9-]{0,62}$")
 _REFERENCE_SEGMENT = re.compile(r"^[A-Za-z0-9._-]{1,128}$")
-ALLOWED_SECRET_USE_INTENTS = frozenset(
-    {
-        "application.control-token",
-        "cloudflare.api-token",
-        "cloudflare.tunnel-token",
-        "docker.local-socket-access-marker",
-        "docker.remote-tls.ca-certificate",
-        "docker.remote-tls.client-certificate",
-        "docker.remote-tls.client-key",
-        "gateway.probe-signing-key",
-        "gateway.node-control-transit-signing-key",
-        "oci.pull-credential",
-        "postgres.password",
-        "workload.node-control-signing-key",
-    }
-)
-
-
+_POLICY_COMMAND_ROUTE_PATHS = frozenset({
+    "/v1/provider-policy/grants",
+    "/v1/provider-policy/grants/{grant_id}/revoke",
+})
 class SecretWriteRequest(BaseModel):
     value_base64: str = Field(min_length=1)
     intent: str
@@ -102,15 +111,60 @@ class DelegationKeyGenerateRequest(BaseModel):
     correlation_id: str = Field(min_length=1, max_length=MAX_CORRELATION_CHARS)
 
 
+class PolicyGrantRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    subject: str = Field(min_length=1, max_length=512)
+    workspace_id: str = Field(min_length=1, max_length=512)
+    action: str = Field(min_length=1, max_length=512)
+    intent: str | None = Field(default=None, max_length=512)
+    expected_revision: int = Field(ge=0, le=MAX_POLICY_REVISION, strict=True)
+    correlation_id: str = Field(min_length=1, max_length=MAX_CORRELATION_CHARS)
+
+
+class PolicyRevokeRequest(PolicyGrantRequest):
+    pass
+
+
+ProviderInitialization = tuple[
+    EncryptedSecretStore,
+    SqliteAuditStore,
+    tuple[ProviderCredential, ...],
+    ProviderPolicyStore,
+]
+ProviderInitializer = Callable[[], ProviderInitialization]
+
+
 def create_app(
     *,
-    store: EncryptedSecretStore,
-    audit_store: SqliteAuditStore,
-    credentials: tuple[ProviderCredential, ...],
+    control: ReceiverNodeControlConfiguration,
+    initialize_provider: ProviderInitializer,
     provider_id: str = "local-dev-provider",
+    clock: Callable[[], int] = lambda: int(time.time()),
 ) -> FastAPI:
-    authorizer = ProviderAuthorizer(credentials)
+    control = require_secrets_control_configuration(control)
     app = FastAPI(title="control-plane-kit-secrets")
+
+    @app.exception_handler(RequestValidationError)
+    async def bounded_policy_command_validation(
+        request: Request,
+        exc: RequestValidationError,
+    ):
+        route = request.scope.get("route")
+        if (
+            request.method == "POST"
+            and getattr(route, "path", None) in _POLICY_COMMAND_ROUTE_PATHS
+        ):
+            return JSONResponse(
+                status_code=422,
+                content={
+                    "detail": {
+                        "outcome": "malformed",
+                        "code": "provider-policy-request-invalid",
+                    }
+                },
+            )
+        return await request_validation_exception_handler(request, exc)
 
     def credential(authorization: str | None = Header(default=None)) -> ProviderCredential:
         try:
@@ -153,13 +207,14 @@ def create_app(
             raise exc
         try:
             _require(
-                authorizer,
+                policy_store,
                 client,
                 action="secret.write",
                 workspace_id=workspace_id,
                 intent=request.intent,
             )
         except HTTPException as exc:
+            outcome, code = _authorization_failure_disposition(exc)
             _append_audit(
                 audit_store,
                 provider_id=provider_id,
@@ -169,8 +224,8 @@ def create_app(
                 intent=request.intent,
                 caller_subject=caller_subject,
                 correlation_id=correlation_id,
-                outcome="denied",
-                code="insufficient-scope",
+                outcome=outcome,
+                code=code,
             )
             raise exc
         try:
@@ -288,13 +343,14 @@ def create_app(
             raise _error(400, "malformed", "invalid-delegation-key-generation")
         try:
             _require(
-                authorizer,
+                policy_store,
                 client,
                 action="secret.generate-delegation-key",
                 workspace_id=workspace_id,
                 intent=generation_intent,
             )
         except HTTPException as exc:
+            outcome, code = _authorization_failure_disposition(exc)
             _append_audit(
                 audit_store,
                 provider_id=provider_id,
@@ -304,8 +360,8 @@ def create_app(
                 intent=generation_intent,
                 caller_subject=request.caller_subject,
                 correlation_id=request.correlation_id,
-                outcome="denied",
-                code="insufficient-scope",
+                outcome=outcome,
+                code=code,
             )
             raise exc
         try:
@@ -426,13 +482,14 @@ def create_app(
             raise exc
         try:
             _require(
-                authorizer,
+                policy_store,
                 client,
                 action="secret.rotate",
                 workspace_id=workspace_id,
                 intent=request.intent,
             )
         except HTTPException as exc:
+            outcome, code = _authorization_failure_disposition(exc)
             _append_audit(
                 audit_store,
                 provider_id=provider_id,
@@ -442,8 +499,8 @@ def create_app(
                 intent=request.intent,
                 caller_subject=caller_subject,
                 correlation_id=correlation_id,
-                outcome="denied",
-                code="insufficient-scope",
+                outcome=outcome,
+                code=code,
             )
             raise exc
         try:
@@ -582,13 +639,14 @@ def create_app(
             raise exc
         try:
             _require(
-                authorizer,
+                policy_store,
                 client,
                 action="secret.resolve",
                 workspace_id=workspace_id,
                 intent=request.intent,
             )
         except HTTPException as exc:
+            outcome, code = _authorization_failure_disposition(exc)
             _append_resolve_audit(
                 audit_store,
                 provider_id=provider_id,
@@ -598,8 +656,8 @@ def create_app(
                 intent=request.intent,
                 caller_subject=request.caller_subject,
                 correlation_id=request.correlation_id,
-                outcome="denied",
-                code="insufficient-scope",
+                outcome=outcome,
+                code=code,
             )
             raise exc
         try:
@@ -714,7 +772,7 @@ def create_app(
         request: SecretVersionRevokeRequest,
         client: ProviderCredential = Depends(credential),
     ) -> dict[str, Any]:
-        _require(authorizer, client, action="secret.revoke", workspace_id=workspace_id)
+        _require(policy_store, client, action="secret.revoke", workspace_id=workspace_id)
         try:
             revoked = store.revoke_secret_version(
                 workspace_id=workspace_id,
@@ -748,7 +806,7 @@ def create_app(
         request: SecretRevokeRequest | None = None,
         client: ProviderCredential = Depends(credential),
     ) -> dict[str, Any]:
-        _require(authorizer, client, action="secret.revoke", workspace_id=workspace_id)
+        _require(policy_store, client, action="secret.revoke", workspace_id=workspace_id)
         caller_subject = (
             client.subject
             if request is None or request.caller_subject is None
@@ -814,7 +872,7 @@ def create_app(
         version_id: str | None = None,
         client: ProviderCredential = Depends(credential),
     ) -> dict[str, Any]:
-        _require(authorizer, client, action="secret.metadata", workspace_id=workspace_id)
+        _require(policy_store, client, action="secret.metadata", workspace_id=workspace_id)
         try:
             metadata = store.metadata(
                 workspace_id=workspace_id,
@@ -849,7 +907,304 @@ def create_app(
             )
             raise _error(404, "missing", "secret-missing") from exc
 
+    @app.post("/v1/provider-policy/grants")
+    def grant_policy(
+        request: PolicyGrantRequest,
+        client: ProviderCredential = Depends(credential),
+    ) -> dict[str, Any]:
+        _validate_policy_correlation(request.correlation_id)
+        coordinate = _policy_coordinate(request)
+        _require_policy_admin(
+            policy_store, client, event_kind="grant",
+            correlation_id=request.correlation_id, coordinate=coordinate,
+        )
+        try:
+            return _policy_command_response(policy_store.grant(
+                actor=client.subject,
+                correlation_id=request.correlation_id,
+                expected_revision=request.expected_revision,
+                coordinate=coordinate,
+            ))
+        except ProviderPolicyInvalid as exc:
+            _record_policy_invalid(
+                policy_store, client, "grant", request.correlation_id,
+                exc.code, coordinate=coordinate,
+            )
+            raise _error(400, "malformed", exc.code) from exc
+        except ProviderPolicyConflict as exc:
+            raise _error(409, "conflict", exc.code) from exc
+        except ProviderPolicyUnavailable as exc:
+            raise _error(503, "unavailable", "provider-policy-unavailable") from exc
+
+    @app.post("/v1/provider-policy/grants/{grant_id}/revoke")
+    def revoke_policy(
+        grant_id: str,
+        request: PolicyRevokeRequest,
+        client: ProviderCredential = Depends(credential),
+    ) -> dict[str, Any]:
+        _validate_policy_correlation(request.correlation_id)
+        coordinate = _policy_coordinate(request)
+        _require_policy_admin(
+            policy_store, client, event_kind="revoke",
+            correlation_id=request.correlation_id, coordinate=coordinate,
+            grant_id=grant_id,
+        )
+        try:
+            return _policy_command_response(policy_store.revoke(
+                actor=client.subject,
+                correlation_id=request.correlation_id,
+                expected_revision=request.expected_revision,
+                grant_id=grant_id,
+                coordinate=coordinate,
+            ))
+        except ProviderPolicyInvalid as exc:
+            _record_policy_invalid(
+                policy_store, client, "revoke", request.correlation_id,
+                exc.code, coordinate=coordinate, grant_id=grant_id,
+            )
+            raise _error(400, "malformed", exc.code) from exc
+        except ProviderPolicyConflict as exc:
+            raise _error(409, "conflict", exc.code) from exc
+        except ProviderPolicyUnavailable as exc:
+            raise _error(503, "unavailable", "provider-policy-unavailable") from exc
+
+    @app.get("/v1/provider-policy/grants/{grant_id}")
+    def read_policy_grant(
+        grant_id: str,
+        correlation_id: str = Header(alias="X-Correlation-ID", max_length=MAX_CORRELATION_CHARS),
+        client: ProviderCredential = Depends(credential),
+    ) -> dict[str, Any]:
+        _validate_policy_correlation(correlation_id)
+        _require_policy_admin(
+            policy_store, client, event_kind="grant-read",
+            correlation_id=correlation_id, grant_id=grant_id,
+        )
+        try:
+            return _policy_grant_read_response(policy_store.read_grant(
+                actor=client.subject,
+                audit_correlation_id=correlation_id,
+                grant_id=grant_id,
+            ))
+        except ProviderPolicyMissing as exc:
+            raise _error(404, "missing", exc.code) from exc
+        except ProviderPolicyInvalid as exc:
+            _record_policy_invalid(
+                policy_store, client, "grant-read", correlation_id, exc.code,
+                grant_id=grant_id,
+            )
+            raise _error(400, "malformed", exc.code) from exc
+        except ProviderPolicyUnavailable as exc:
+            raise _error(503, "unavailable", "provider-policy-unavailable") from exc
+
+    @app.get("/v1/provider-policy/grants")
+    def list_policy_grants(
+        correlation_id: str = Header(alias="X-Correlation-ID", max_length=MAX_CORRELATION_CHARS),
+        subject: str | None = None,
+        workspace_id: str | None = None,
+        action: str | None = None,
+        intent_mode: str = "any",
+        intent: str | None = None,
+        limit: int = 100,
+        after_grant_id: str | None = None,
+        client: ProviderCredential = Depends(credential),
+    ) -> dict[str, Any]:
+        _validate_policy_correlation(correlation_id)
+        _require_policy_admin(
+            policy_store, client, event_kind="grant-list",
+            correlation_id=correlation_id,
+        )
+        try:
+            return _policy_page_response(policy_store.list_current(
+                actor=client.subject,
+                audit_correlation_id=correlation_id,
+                subject=subject,
+                workspace_id=workspace_id,
+                action=action,
+                intent_mode=intent_mode,
+                intent=intent,
+                limit=limit,
+                after_grant_id=after_grant_id,
+            ))
+        except ProviderPolicyInvalid as exc:
+            _record_policy_invalid(
+                policy_store, client, "grant-list", correlation_id, exc.code,
+            )
+            raise _error(400, "malformed", exc.code) from exc
+        except ProviderPolicyUnavailable as exc:
+            raise _error(503, "unavailable", "provider-policy-unavailable") from exc
+
+    @app.get("/v1/provider-policy/commands/{command_correlation_id}")
+    def read_policy_command(
+        command_correlation_id: str,
+        correlation_id: str = Header(alias="X-Correlation-ID", max_length=MAX_CORRELATION_CHARS),
+        client: ProviderCredential = Depends(credential),
+    ) -> dict[str, Any]:
+        _validate_policy_correlation(correlation_id)
+        _require_policy_admin(
+            policy_store, client, event_kind="command-read",
+            correlation_id=correlation_id,
+        )
+        try:
+            return _policy_command_response(policy_store.read_command(
+                actor=client.subject,
+                audit_correlation_id=correlation_id,
+                command_correlation_id=command_correlation_id,
+            ))
+        except ProviderPolicyMissing as exc:
+            raise _error(404, "missing", exc.code) from exc
+        except ProviderPolicyInvalid as exc:
+            _record_policy_invalid(
+                policy_store, client, "command-read", correlation_id, exc.code,
+            )
+            raise _error(400, "malformed", exc.code) from exc
+        except ProviderPolicyUnavailable as exc:
+            raise _error(503, "unavailable", "provider-policy-unavailable") from exc
+
+    install_cpk_wrapper(app, configuration=control, clock=clock)
+    # Complete host admission precedes the single protected/durable effect.
+    # All handler closures are bound before this app can be returned or served.
+    store, audit_store, credentials, policy_store = initialize_provider()
+    authorizer = ProviderAuthorizer(credentials)
     return app
+
+
+def _policy_coordinate(request: PolicyGrantRequest) -> PolicyCoordinate:
+    return PolicyCoordinate(
+        subject=request.subject,
+        workspace_id=request.workspace_id,
+        action=request.action,
+        intent=request.intent,
+    )
+
+
+def _validate_policy_correlation(correlation_id: str) -> None:
+    if (
+        not correlation_id.strip()
+        or any(
+            ord(character) < 0x20 or ord(character) == 0x7F
+            for character in correlation_id
+        )
+    ):
+        raise _error(400, "malformed", "provider-policy-correlation-invalid")
+
+
+def _require_policy_admin(
+    policy_store: ProviderPolicyStore,
+    client: ProviderCredential,
+    *,
+    event_kind: str,
+    correlation_id: str,
+    coordinate: PolicyCoordinate | None = None,
+    grant_id: str | None = None,
+) -> None:
+    if "secrets.policy-admin" in client.capabilities:
+        return
+    try:
+        policy_store.record_denial(
+            event_kind=event_kind,
+            actor=client.subject,
+            correlation_id=correlation_id,
+            code="policy-admin-required",
+            coordinate=coordinate,
+            grant_id=grant_id,
+        )
+    except ProviderPolicyInvalid:
+        try:
+            policy_store.record_denial(
+                event_kind=event_kind,
+                actor=client.subject,
+                correlation_id=correlation_id,
+                code="policy-admin-required",
+            )
+        except (ProviderPolicyInvalid, ProviderPolicyUnavailable) as exc:
+            raise _error(503, "unavailable", "provider-policy-unavailable") from exc
+    except ProviderPolicyUnavailable as exc:
+        raise _error(503, "unavailable", "provider-policy-unavailable") from exc
+    raise _error(403, "denied", "policy-admin-required")
+
+
+def _record_policy_invalid(
+    policy_store: ProviderPolicyStore,
+    client: ProviderCredential,
+    event_kind: str,
+    correlation_id: str,
+    code: str,
+    *,
+    coordinate: PolicyCoordinate | None = None,
+    grant_id: str | None = None,
+) -> None:
+    try:
+        policy_store.record_denial(
+            event_kind=event_kind,
+            actor=client.subject,
+            correlation_id=correlation_id,
+            code=code,
+            outcome="malformed",
+            coordinate=coordinate,
+            grant_id=grant_id,
+        )
+    except ProviderPolicyInvalid:
+        try:
+            policy_store.record_denial(
+                event_kind=event_kind,
+                actor=client.subject,
+                correlation_id=correlation_id,
+                code=code,
+                outcome="malformed",
+            )
+        except (ProviderPolicyInvalid, ProviderPolicyUnavailable) as exc:
+            raise _error(503, "unavailable", "provider-policy-unavailable") from exc
+    except ProviderPolicyUnavailable as exc:
+        raise _error(503, "unavailable", "provider-policy-unavailable") from exc
+
+
+def _policy_command_response(result: PolicyCommandResult) -> dict[str, Any]:
+    return {
+        "provider_id": result.provider_id,
+        "correlation_id": result.correlation_id,
+        "operation": result.operation,
+        "subject": result.coordinate.subject,
+        "workspace_id": result.coordinate.workspace_id,
+        "action": result.coordinate.action,
+        "intent": result.coordinate.intent,
+        "expected_revision": result.expected_revision,
+        "outcome": result.outcome,
+        "code": result.code,
+        "grant_id": result.grant_id,
+        "resulting_revision": result.resulting_revision,
+        "actor": result.actor,
+        "occurred_at": result.occurred_at,
+    }
+
+
+def _policy_grant_response(grant: ProviderGrantRecord) -> dict[str, Any]:
+    return {
+        "grant_id": grant.grant_id,
+        "provider_id": grant.provider_id,
+        "subject": grant.coordinate.subject,
+        "workspace_id": grant.coordinate.workspace_id,
+        "action": grant.coordinate.action,
+        "intent": grant.coordinate.intent,
+        "origin": grant.origin,
+        "granted_by": grant.granted_by,
+        "grant_correlation_id": grant.grant_correlation_id,
+        "granted_at": grant.granted_at,
+        "revoked_by": grant.revoked_by,
+        "revoke_correlation_id": grant.revoke_correlation_id,
+        "revoked_at": grant.revoked_at,
+    }
+
+
+def _policy_grant_read_response(result: PolicyGrantRead) -> dict[str, Any]:
+    return {"revision": result.revision, "grant": _policy_grant_response(result.grant)}
+
+
+def _policy_page_response(page: PolicyGrantPage) -> dict[str, Any]:
+    return {
+        "revision": page.revision,
+        "grants": [_policy_grant_response(grant) for grant in page.grants],
+        "next_after": page.next_after,
+    }
 
 
 def _metadata_response(metadata: SecretMetadata) -> dict[str, Any]:
@@ -918,7 +1273,7 @@ def _valid_secret_reference(value: str) -> bool:
 
 
 def _require(
-    authorizer: ProviderAuthorizer,
+    policy_store: ProviderPolicyStore,
     client: ProviderCredential,
     *,
     action: str,
@@ -926,14 +1281,29 @@ def _require(
     intent: str | None = None,
 ) -> None:
     try:
-        authorizer.require(
-            client,
+        policy_store.require_active(PolicyCoordinate(
+            subject=client.subject,
             action=action,
             workspace_id=workspace_id,
             intent=intent,
-        )
-    except SecretUseDenied as exc:
+        ))
+    except ProviderPolicyDenied as exc:
         raise _error(403, "denied", "insufficient-scope") from exc
+    except ProviderPolicyInvalid as exc:
+        raise _error(400, "malformed", exc.code) from exc
+    except ProviderPolicyUnavailable as exc:
+        raise _error(503, "unavailable", "provider-policy-unavailable") from exc
+
+
+def _authorization_failure_disposition(exc: HTTPException) -> tuple[str, str]:
+    detail = exc.detail
+    if (
+        not isinstance(detail, dict)
+        or detail.get("outcome") not in {"denied", "malformed", "unavailable"}
+        or not isinstance(detail.get("code"), str)
+    ):
+        return "unavailable", "provider-policy-unavailable"
+    return detail["outcome"], detail["code"]
 
 
 def _append_resolve_audit(

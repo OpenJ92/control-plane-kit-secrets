@@ -29,35 +29,42 @@ class AuditRecord:
     occurred_at: str
 
 
+
+_SCHEMA_STATEMENTS = (
+    """
+    CREATE TABLE IF NOT EXISTS audit_records (
+        event_id TEXT PRIMARY KEY,
+        provider_id TEXT NOT NULL,
+        workspace_id TEXT NOT NULL,
+        secret_id TEXT NOT NULL,
+        version_id TEXT,
+        intent TEXT,
+        caller_subject TEXT NOT NULL,
+        correlation_id TEXT NOT NULL,
+        outcome TEXT NOT NULL,
+        code TEXT NOT NULL,
+        occurred_at TEXT NOT NULL
+    )
+    """,
+    """
+    CREATE INDEX IF NOT EXISTS idx_audit_records_reference
+    ON audit_records (workspace_id, secret_id, occurred_at)
+    """,
+)
+
+
 class SqliteAuditStore:
     def __init__(self, database_path: str | Path) -> None:
         self._database_path = Path(database_path)
 
     def initialize(self) -> None:
         with self._connection() as connection:
-            connection.execute(
-                """
-                CREATE TABLE IF NOT EXISTS audit_records (
-                    event_id TEXT PRIMARY KEY,
-                    provider_id TEXT NOT NULL,
-                    workspace_id TEXT NOT NULL,
-                    secret_id TEXT NOT NULL,
-                    version_id TEXT,
-                    intent TEXT,
-                    caller_subject TEXT NOT NULL,
-                    correlation_id TEXT NOT NULL,
-                    outcome TEXT NOT NULL,
-                    code TEXT NOT NULL,
-                    occurred_at TEXT NOT NULL
-                )
-                """
-            )
-            connection.execute(
-                """
-                CREATE INDEX IF NOT EXISTS idx_audit_records_reference
-                ON audit_records (workspace_id, secret_id, occurred_at)
-                """
-            )
+            self.initialize_in_transaction(connection)
+
+    def initialize_in_transaction(self, connection: sqlite3.Connection) -> None:
+        """Create owned schema using the caller's connection and transaction."""
+        for statement in _SCHEMA_STATEMENTS:
+            connection.execute(statement)
 
     def append(self, record: AuditRecord) -> None:
         try:

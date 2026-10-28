@@ -4,20 +4,83 @@ import base64
 import json
 import os
 import socket
+import sqlite3
 import subprocess
 import sys
 import tempfile
 import time
 import unittest
 from pathlib import Path
+from contextlib import closing
 
 import httpx
+import control_plane_kit_core as core
+from control_fixtures import ControlAuthority
 
 from control_plane_kit_secrets.audit import SqliteAuditStore
 from control_plane_kit_secrets.crypto import encode_master_key_for_file
 
 
 class LiveProviderProcessTests(unittest.TestCase):
+    def test_invalid_bootstrap_exits_before_creating_custody_or_audit(self) -> None:
+        cases = ("missing-key", "malformed-key", "missing-credentials", "malformed-json",
+                 "unknown-grant-field", "duplicate-token", "untyped-subject")
+        for case in cases:
+            with self.subTest(case=case), tempfile.TemporaryDirectory() as directory:
+                base = Path(directory)
+                db_path = base / "uncreated-custody" / "secrets.sqlite3"
+                key_path = base / "private-key-path-marker"
+                key_path.write_text(encode_master_key_for_file(os.urandom(32)), encoding="utf-8")
+                key_path.chmod(0o600)
+                credentials_path = base / "private-credentials-path-marker"
+                item = {"subject": "client", "token": "private-token-marker"}
+                document = [item]
+                if case == "unknown-grant-field":
+                    item["grants"] = [{"action": "secret.resolve", "workspace_id": "*", "intent": []}]
+                elif case == "duplicate-token":
+                    document.append({**item, "subject": "other"})
+                elif case == "untyped-subject":
+                    item["subject"] = 42
+                credentials_path.write_text(
+                    "private-document-marker" if case == "malformed-json" else json.dumps(document),
+                    encoding="utf-8",
+                )
+                credentials_path.chmod(0o600)
+                public_control = base / "control.json"
+                public_control.write_bytes(ControlAuthority(f"private-{case}").encoded())
+                public_control.chmod(0o444)
+                environment = {key: value for key, value in os.environ.items()
+                               if not key.startswith("CPK_SECRETS_")}
+                environment.update({"CPK_SECRETS_DATABASE_PATH": str(db_path),
+                                    "CPK_SECRETS_MASTER_KEY_FILE": str(key_path),
+                                    "CPK_SECRETS_CREDENTIALS_FILE": str(credentials_path),
+                                    "CPK_WRAPPER_CONFIGURATION_FILE": str(public_control),
+                                    "CPK_SECRETS_PROVIDER_ID": "private-provider-marker"})
+                if case == "missing-key":
+                    key_path.unlink()
+                elif case == "malformed-key":
+                    key_path.write_text("private-key-material-marker\u00e9", encoding="utf-8")
+                elif case == "missing-credentials":
+                    credentials_path.unlink()
+                process = _start_provider(port=_free_port(), environment=environment)
+                try:
+                    try:
+                        stdout, stderr = process.communicate(timeout=10)
+                    except subprocess.TimeoutExpired:
+                        self.fail("invalid bootstrap did not exit within the startup bound")
+                    self.assertNotEqual(process.returncode, 0)
+                    output = stdout + stderr
+                    self.assertIn("secret provider configuration is invalid", output)
+                    self.assertLess(len(output), 16384)
+                    for forbidden in (str(base), "private-token-marker", "private-document-marker",
+                                      "private-key-material-marker", "private-provider-marker"):
+                        self.assertFalse(forbidden in output, "bootstrap detail leaked")
+                    self.assertFalse(db_path.exists(), "invalid bootstrap created a database")
+                    self.assertFalse(db_path.parent.exists(), "invalid bootstrap created custody directories")
+                finally:
+                    if process.poll() is None:
+                        _stop_provider(process)
+
     def test_restart_rotate_revoke_and_leak_audit_through_real_process(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             base = Path(directory)
@@ -36,10 +99,14 @@ class LiveProviderProcessTests(unittest.TestCase):
                             "subject": "provider-client",
                             "token": token,
                             "grants": [
-                                {"action": "secret.write", "workspace_id": "workspace-1"},
-                                {"action": "secret.rotate", "workspace_id": "workspace-1"},
-                                {"action": "secret.revoke", "workspace_id": "workspace-1"},
-                                {"action": "secret.metadata", "workspace_id": "workspace-1"},
+                                {"action": "secret.write", "workspace_id": "workspace-1",
+                                 "intents": ["postgres.password"]},
+                                {"action": "secret.rotate", "workspace_id": "workspace-1",
+                                 "intents": ["postgres.password"]},
+                                {"action": "secret.revoke", "workspace_id": "workspace-1",
+                                 "intents": []},
+                                {"action": "secret.metadata", "workspace_id": "workspace-1",
+                                 "intents": []},
                                 {
                                     "action": "secret.resolve",
                                     "workspace_id": "workspace-1",
@@ -51,7 +118,8 @@ class LiveProviderProcessTests(unittest.TestCase):
                             "subject": "metadata-only",
                             "token": denied_token,
                             "grants": [
-                                {"action": "secret.metadata", "workspace_id": "workspace-1"},
+                                {"action": "secret.metadata", "workspace_id": "workspace-1",
+                                 "intents": []},
                             ],
                         },
                     ],
@@ -60,6 +128,11 @@ class LiveProviderProcessTests(unittest.TestCase):
                 encoding="utf-8",
             )
             credentials_path.chmod(0o600)
+            authority = ControlAuthority("restart")
+            public_control = base / "control.json"
+            public_control.write_bytes(authority.encoded())
+            public_control.chmod(0o444)
+            control_tokens = []
             port = _free_port()
             environment = {
                 **os.environ,
@@ -67,11 +140,13 @@ class LiveProviderProcessTests(unittest.TestCase):
                 "CPK_SECRETS_MASTER_KEY_FILE": str(key_path),
                 "CPK_SECRETS_PROVIDER_ID": "provider-live",
                 "CPK_SECRETS_CREDENTIALS_FILE": str(credentials_path),
+                "CPK_WRAPPER_CONFIGURATION_FILE": str(public_control),
             }
 
             process = _start_provider(port=port, environment=environment)
             try:
                 _wait_ready(port)
+                control_tokens.extend(_assert_control_reads(self, port, authority, db_path))
                 secret_value = b"live-secret-postgres-password"
                 write = _request(
                     "POST",
@@ -110,6 +185,7 @@ class LiveProviderProcessTests(unittest.TestCase):
             process = _start_provider(port=port, environment=environment)
             try:
                 _wait_ready(port)
+                control_tokens.extend(_assert_control_reads(self, port, authority, db_path))
                 resolved = _resolve(port, token=token, correlation_id="resolve-after-restart")
                 self.assertEqual(resolved.status_code, 200, resolved.text)
                 self.assertEqual(
@@ -204,6 +280,10 @@ class LiveProviderProcessTests(unittest.TestCase):
                 self.assertNotIn(forbidden, leak_surface)
                 self.assertNotIn(forbidden.encode("utf-8"), db_path.read_bytes())
             self.assertNotIn(key_bytes, db_path.read_bytes())
+            for credential in control_tokens:
+                self.assertFalse(credential in leak_surface, "control read credential leaked")
+                self.assertFalse(credential.encode("ascii") in db_path.read_bytes(),
+                                 "control read credential entered custody")
 
             wrong_key_path = base / "wrong-master.key"
             wrong_key_path.write_text(
@@ -211,14 +291,40 @@ class LiveProviderProcessTests(unittest.TestCase):
                 encoding="utf-8",
             )
             wrong_key_path.chmod(0o600)
-            wrong_environment = {
-                **environment,
-                "CPK_SECRETS_MASTER_KEY_FILE": str(wrong_key_path),
-            }
-            process = _start_provider(port=port, environment=wrong_environment)
+            for changed in (
+                {"CPK_SECRETS_MASTER_KEY_FILE": str(wrong_key_path)},
+                {"CPK_SECRETS_PROVIDER_ID": "different-provider"},
+            ):
+                with self.subTest(changed_setting=tuple(changed)):
+                    with closing(sqlite3.connect(db_path)) as connection:
+                        before = tuple(connection.iterdump())
+                    key_before = key_path.read_bytes()
+                    credentials_before = credentials_path.read_bytes()
+                    process = _start_provider(port=port, environment={**environment, **changed})
+                    try:
+                        try:
+                            denied_stdout, denied_stderr = process.communicate(timeout=10)
+                        except subprocess.TimeoutExpired:
+                            self.fail("incompatible custody did not refuse startup")
+                        self.assertNotEqual(process.returncode, 0)
+                        output = denied_stdout + denied_stderr
+                        self.assertIn("secret provider custody is incompatible", output)
+                        for forbidden in (str(base), token, "different-provider", rotated_value.decode("ascii")):
+                            self.assertFalse(forbidden in output, "custody startup detail leaked")
+                        with closing(sqlite3.connect(db_path)) as connection:
+                            self.assertTrue(before == tuple(connection.iterdump()), "incompatible startup mutated custody")
+                        self.assertTrue(key_before == key_path.read_bytes(), "startup changed master key")
+                        self.assertTrue(credentials_before == credentials_path.read_bytes(), "startup changed credentials")
+                    finally:
+                        if process.poll() is None:
+                            _stop_provider(process)
+
+            final_control_tokens = []
+            process = _start_provider(port=port, environment=environment)
             try:
                 _wait_ready(port)
-                wrong_key = _request(
+                final_control_tokens = _assert_control_reads(self, port, authority, db_path)
+                retained = _request(
                     "POST",
                     port,
                     "/v1/workspaces/workspace-1/secrets/wrong-key-target/resolve",
@@ -226,15 +332,39 @@ class LiveProviderProcessTests(unittest.TestCase):
                     json_body={
                         "intent": "postgres.password",
                         "caller_subject": "acceptance",
-                        "correlation_id": "wrong-key",
+                        "correlation_id": "after-rejected-startup",
                     },
                 )
-                self.assertEqual(wrong_key.status_code, 503)
-                self.assertEqual(wrong_key.json()["detail"]["outcome"], "unavailable")
-                self.assertNotIn(rotated_value.decode("ascii"), wrong_key.text)
+                self.assertEqual(retained.status_code, 200)
+                self.assertTrue(base64.b64decode(retained.json()["value_base64"]) == wrong_key_target)
             finally:
                 wrong_stdout, wrong_stderr = _stop_provider(process)
                 self.assertNotIn(rotated_value.decode("ascii"), wrong_stdout + wrong_stderr)
+                for credential in final_control_tokens:
+                    self.assertFalse(credential in wrong_stdout + wrong_stderr,
+                                     "control read credential leaked after restart")
+
+
+def _assert_control_reads(test, port, authority, database_path):
+    before = SqliteAuditStore(database_path).rows_for_tests()
+    tokens = []
+    for static, path in ((True, "/__control/capabilities"), (False, "/__control/health/liveness")):
+        request, token = authority.signed_read(static=static, issued_at=int(time.time()) - 1, lifetime=120)
+        tokens.append(token)
+        response = _request("GET", port, path, token=token)
+        test.assertEqual(response.status_code, 200)
+        if static:
+            test.assertEqual(response.content, core.ReceiverControlSurfaceReadResultCodec(
+                request, authority.declaration).capabilities_result().canonical_bytes())
+        else:
+            result = core.ReceiverHealthReadResultCodec(request, authority.declaration).decode(response.json())
+            test.assertIs(result.outcome, core.NodeHealthReadOutcome.HEALTHY)
+    denied = _request("GET", port, "/__control/health/liveness", token=tokens[0])
+    test.assertEqual(denied.status_code, 401)
+    missing = httpx.get(f"http://127.0.0.1:{port}/__control/health/liveness", timeout=5)
+    test.assertEqual(missing.status_code, 401)
+    test.assertTrue(before == SqliteAuditStore(database_path).rows_for_tests(), "control reads changed audit")
+    return tokens
 
 
 def _start_provider(*, port: int, environment: dict[str, str]) -> subprocess.Popen[str]:

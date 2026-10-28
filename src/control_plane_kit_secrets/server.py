@@ -4,10 +4,11 @@ import os
 from typing import Mapping
 
 from .api import create_app
-from .audit import SqliteAuditStore
 from .bootstrap import ProviderConfigurationError, load_provider_credentials
-from .crypto import load_master_key_from_environment
-from .store import EncryptedSecretStore
+from .crypto import SecretCryptoError, load_master_key_from_environment
+from .custody import admit_provider_custody
+from .provider_policy import ProviderPolicyStore
+from .control import read_secrets_control_configuration
 
 
 def app_from_environment(environment: Mapping[str, str] | None = None) -> object:
@@ -17,15 +18,30 @@ def app_from_environment(environment: Mapping[str, str] | None = None) -> object
     if not database_path:
         raise ProviderConfigurationError()
 
-    master_key = load_master_key_from_environment(source)
-    store = EncryptedSecretStore(database_path, master_key=master_key)
-    store.initialize()
-    audit_store = SqliteAuditStore(database_path)
-    audit_store.initialize()
+    control = read_secrets_control_configuration(source)
+
+    def initialize_provider():
+        try:
+            master_key = load_master_key_from_environment(source)
+            credentials = load_provider_credentials(source)
+        except (SecretCryptoError, ProviderConfigurationError):
+            raise ProviderConfigurationError() from None
+        store, audit_store = admit_provider_custody(
+            database_path,
+            master_key=master_key,
+            provider_id=provider_id,
+            credentials=credentials,
+        )
+        return (
+            store,
+            audit_store,
+            credentials,
+            ProviderPolicyStore(database_path, provider_id=provider_id),
+        )
+
     return create_app(
-        store=store,
-        audit_store=audit_store,
-        credentials=load_provider_credentials(source),
+        control=control,
+        initialize_provider=initialize_provider,
         provider_id=provider_id,
     )
 

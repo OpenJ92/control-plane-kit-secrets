@@ -1,0 +1,29 @@
+Source: [src/control_plane_kit_secrets/api.py](../../../../src/control_plane_kit_secrets/api.py).
+Maintain this document alongside its source file. When the source or relevant imported contracts change, verify and update this companion in the same change.
+
+## HTTP boundary
+
+create_app requires public control configuration and one named ProviderInitializer. It revalidates the common Core receiver value and exact Secrets declaration, constructs all ordinary literal routes, and installs the actual SDK wrapper on the complete host before invoking the initializer once. SDK setup supplies the existing surface verifier and automatic liveness; no direct local verifier or dispatcher construction remains. Only then does it bind the returned real store, audit, credentials and durable policy store into handler closures and return the app. Invalid public input or a real route collision precedes private initialization; failure returns no app, and no request lazily initializes custody. Arbitrary caller initializer effects retain their own rollback semantics.
+
+The provider exposes secret write, rotate, resolve, revoke, exact-version revoke, delegation generation and metadata with bearer authentication followed by an exact active durable grant check; there is no static-grant fallback. It also exposes independent administrative grant/revoke commands and audited exact-grant, current-list and command-result reads. Those routes require the bootstrap-only `secrets.policy-admin` capability and bounded correlations; loss of that configured capability takes effect when the application is reconstructed. This owner does not claim hot reload. The provider does not own CPK planning, execution or MCP. SDK static/liveness routes retain independent typed authority and do no provider auth/store/audit work.
+
+Request caller_subject is supplied audit/correlation context, not another authenticated identity. One exact current durable provider grant authorizes the action; configured credential grants are seed input only. Write/rotate canonicalize the intent label; resolution requires matching durable intent. Generation has a distinct permission and derives intent from the local signing-family map. Revocation requires secret.revoke.
+
+Policy command revisions are strict signed-64-bit JSON integers. A usable policy correlation is required before policy audit; whitespace/control-only correlations reject without inventing a durable identity. With a usable correlation, invalid exact/list/command reads append a bounded malformed event or fail unavailable rather than silently swallowing required audit. Secret-action audit preserves durable-policy denial, malformed and unavailable categories. Authorization linearizes at the exact durable check: a request admitted before a later revoke may finish, while checks begun afterward deny.
+
+## Disclosure and transaction limits
+
+Only authorized resolve deliberately returns recoverable material as value_base64; base64 is not redaction. Other successful responses contain metadata or public key identity. Metadata includes labels and key fingerprint/version, so it is not a universal safe-publication surface.
+
+Handled failures use fixed outcome/code details. Policy grant/revoke command bodies are closed to their declared fields. Their framework validation failures receive one route-specific bounded response so rejected authority, credential and transport values are not reflected; unrelated framework validation still uses FastAPI's default handler. No global scrubber replaces arbitrary exception chains. The decoded value has a 64 KiB cap; this is not a whole HTTP request-body bound.
+
+Resolve appends audit before returning material, but its version-selection transaction may already be committed. Generation and exact-version revocation couple audit and mutation inside the store transaction. Ordinary write/rotate/whole-reference revoke commit before separate audit appends: audit failure does not imply no mutation. Audit coverage differs among route branches, authentication failures and framework rejection paths.
+
+Read [auth.py](../../../../src/control_plane_kit_secrets/auth.py), [store.py](../../../../src/control_plane_kit_secrets/store.py), [audit.py](../../../../src/control_plane_kit_secrets/audit.py) and [server.py](../../../../src/control_plane_kit_secrets/server.py). [test_provider_api.py](../../../../tests/test_provider_api.py) protects local HTTP composition, not external provider acceptance.
+
+#29 appends the two exact health signing intents to the existing closed API
+allowlist. Generation derives each intent from the separate local family map;
+resolve/write/rotate admit it only under their unchanged credential grants.
+No endpoint, request/response schema, wildcard rule, audit or transaction
+behavior changes. Wrong durable intent still requires metadata inspection and
+denial audit but must not decrypt or commit a new resolution selection.

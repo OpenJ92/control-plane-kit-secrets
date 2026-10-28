@@ -44,6 +44,95 @@ MAX_DELEGATION_PUBLIC_KEY_PEM_CHARS = 8192
 MAX_DELEGATION_KEY_ID_CHARS = 128
 
 
+
+_SCHEMA_STATEMENTS = (
+    """
+    CREATE TABLE IF NOT EXISTS secret_versions (
+        workspace_id TEXT NOT NULL,
+        secret_id TEXT NOT NULL,
+        version_id TEXT NOT NULL,
+        version_number INTEGER NOT NULL,
+        status TEXT NOT NULL,
+        algorithm TEXT NOT NULL,
+        key_fingerprint TEXT NOT NULL,
+        key_version TEXT NOT NULL,
+        nonce BLOB NOT NULL,
+        ciphertext BLOB NOT NULL,
+        labels_json TEXT NOT NULL,
+        created_at TEXT NOT NULL,
+        revoked_at TEXT,
+        PRIMARY KEY (workspace_id, secret_id, version_id),
+        UNIQUE (workspace_id, secret_id, version_number)
+    )
+    """,
+    """
+    CREATE INDEX IF NOT EXISTS idx_secret_versions_latest
+    ON secret_versions (workspace_id, secret_id, version_number DESC)
+    """,
+    """
+    CREATE TABLE IF NOT EXISTS secret_resolution_selections (
+        workspace_id TEXT NOT NULL,
+        correlation_id TEXT NOT NULL,
+        secret_id TEXT NOT NULL,
+        intent TEXT NOT NULL,
+        caller_subject TEXT NOT NULL,
+        version_id TEXT NOT NULL,
+        selected_at TEXT NOT NULL,
+        PRIMARY KEY (workspace_id, correlation_id),
+        FOREIGN KEY (workspace_id, secret_id, version_id)
+          REFERENCES secret_versions (
+            workspace_id,
+            secret_id,
+            version_id
+          )
+    )
+    """,
+    """
+    CREATE TABLE IF NOT EXISTS delegation_key_generations (
+        workspace_id TEXT NOT NULL,
+        correlation_id TEXT NOT NULL,
+        secret_id TEXT NOT NULL,
+        secret_reference TEXT NOT NULL,
+        purpose TEXT NOT NULL,
+        issuer TEXT NOT NULL,
+        caller_subject TEXT NOT NULL,
+        version_id TEXT NOT NULL,
+        key_id TEXT NOT NULL,
+        algorithm TEXT NOT NULL,
+        public_key_pem TEXT NOT NULL,
+        generated_at TEXT NOT NULL,
+        PRIMARY KEY (workspace_id, correlation_id),
+        UNIQUE (workspace_id, secret_id),
+        FOREIGN KEY (workspace_id, secret_id, version_id)
+          REFERENCES secret_versions (
+            workspace_id,
+            secret_id,
+            version_id
+          )
+    )
+    """,
+    """
+    CREATE TABLE IF NOT EXISTS secret_version_revocations (
+        workspace_id TEXT NOT NULL,
+        correlation_id TEXT NOT NULL,
+        secret_id TEXT NOT NULL,
+        version_id TEXT NOT NULL,
+        version_number INTEGER NOT NULL,
+        caller_subject TEXT NOT NULL,
+        revoked_at TEXT NOT NULL,
+        PRIMARY KEY (workspace_id, correlation_id),
+        UNIQUE (workspace_id, secret_id, version_id),
+        FOREIGN KEY (workspace_id, secret_id, version_id)
+          REFERENCES secret_versions (
+            workspace_id,
+            secret_id,
+            version_id
+          )
+    )
+    """,
+)
+
+
 class EncryptedSecretStore:
     def __init__(self, database_path: str | Path, *, master_key: MasterKey) -> None:
         self._database_path = Path(database_path)
@@ -51,100 +140,12 @@ class EncryptedSecretStore:
 
     def initialize(self) -> None:
         with self._connection() as connection:
-            connection.execute(
-                """
-                CREATE TABLE IF NOT EXISTS secret_versions (
-                    workspace_id TEXT NOT NULL,
-                    secret_id TEXT NOT NULL,
-                    version_id TEXT NOT NULL,
-                    version_number INTEGER NOT NULL,
-                    status TEXT NOT NULL,
-                    algorithm TEXT NOT NULL,
-                    key_fingerprint TEXT NOT NULL,
-                    key_version TEXT NOT NULL,
-                    nonce BLOB NOT NULL,
-                    ciphertext BLOB NOT NULL,
-                    labels_json TEXT NOT NULL,
-                    created_at TEXT NOT NULL,
-                    revoked_at TEXT,
-                    PRIMARY KEY (workspace_id, secret_id, version_id),
-                    UNIQUE (workspace_id, secret_id, version_number)
-                )
-                """
-            )
-            connection.execute(
-                """
-                CREATE INDEX IF NOT EXISTS idx_secret_versions_latest
-                ON secret_versions (workspace_id, secret_id, version_number DESC)
-                """
-            )
-            connection.execute(
-                """
-                CREATE TABLE IF NOT EXISTS secret_resolution_selections (
-                    workspace_id TEXT NOT NULL,
-                    correlation_id TEXT NOT NULL,
-                    secret_id TEXT NOT NULL,
-                    intent TEXT NOT NULL,
-                    caller_subject TEXT NOT NULL,
-                    version_id TEXT NOT NULL,
-                    selected_at TEXT NOT NULL,
-                    PRIMARY KEY (workspace_id, correlation_id),
-                    FOREIGN KEY (workspace_id, secret_id, version_id)
-                      REFERENCES secret_versions (
-                        workspace_id,
-                        secret_id,
-                        version_id
-                      )
-                )
-                """
-            )
-            connection.execute(
-                """
-                CREATE TABLE IF NOT EXISTS delegation_key_generations (
-                    workspace_id TEXT NOT NULL,
-                    correlation_id TEXT NOT NULL,
-                    secret_id TEXT NOT NULL,
-                    secret_reference TEXT NOT NULL,
-                    purpose TEXT NOT NULL,
-                    issuer TEXT NOT NULL,
-                    caller_subject TEXT NOT NULL,
-                    version_id TEXT NOT NULL,
-                    key_id TEXT NOT NULL,
-                    algorithm TEXT NOT NULL,
-                    public_key_pem TEXT NOT NULL,
-                    generated_at TEXT NOT NULL,
-                    PRIMARY KEY (workspace_id, correlation_id),
-                    UNIQUE (workspace_id, secret_id),
-                    FOREIGN KEY (workspace_id, secret_id, version_id)
-                      REFERENCES secret_versions (
-                        workspace_id,
-                        secret_id,
-                        version_id
-                      )
-                )
-                """
-            )
-            connection.execute(
-                """
-                CREATE TABLE IF NOT EXISTS secret_version_revocations (
-                    workspace_id TEXT NOT NULL,
-                    correlation_id TEXT NOT NULL,
-                    secret_id TEXT NOT NULL,
-                    version_id TEXT NOT NULL,
-                    version_number INTEGER NOT NULL,
-                    caller_subject TEXT NOT NULL,
-                    revoked_at TEXT NOT NULL,
-                    PRIMARY KEY (workspace_id, correlation_id),
-                    UNIQUE (workspace_id, secret_id, version_id),
-                    FOREIGN KEY (workspace_id, secret_id, version_id)
-                      REFERENCES secret_versions (
-                        workspace_id,
-                        secret_id,
-                        version_id
-                      )
-                )
-                """
-            )
+            self.initialize_in_transaction(connection)
+
+    def initialize_in_transaction(self, connection: sqlite3.Connection) -> None:
+        """Create owned schema using the caller's connection and transaction."""
+        for statement in _SCHEMA_STATEMENTS:
+            connection.execute(statement)
 
     def generate_delegation_key(
         self,
