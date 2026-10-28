@@ -82,18 +82,31 @@ _SCHEMA_STATEMENTS = (
     CREATE TABLE IF NOT EXISTS provider_policy_events (
         event_id TEXT PRIMARY KEY,
         provider_id TEXT NOT NULL,
-        grant_id TEXT NOT NULL,
-        subject TEXT NOT NULL,
-        workspace_id TEXT NOT NULL,
-        action TEXT NOT NULL,
+        grant_id TEXT,
+        subject TEXT,
+        workspace_id TEXT,
+        action TEXT,
         intent TEXT,
-        event_kind TEXT NOT NULL CHECK (event_kind IN ('seed', 'grant', 'revoke')),
+        event_kind TEXT NOT NULL CHECK (
+            event_kind IN (
+                'seed', 'grant', 'revoke', 'grant-read', 'grant-list', 'command-read'
+            )
+        ),
         actor TEXT NOT NULL,
         correlation_id TEXT NOT NULL,
         outcome TEXT NOT NULL,
         code TEXT NOT NULL,
         occurred_at TEXT NOT NULL,
-        FOREIGN KEY (grant_id) REFERENCES provider_grants (grant_id)
+        FOREIGN KEY (grant_id) REFERENCES provider_grants (grant_id),
+        CHECK (
+            event_kind != 'seed'
+            OR (
+                grant_id IS NOT NULL
+                AND subject IS NOT NULL
+                AND workspace_id IS NOT NULL
+                AND action IS NOT NULL
+            )
+        )
     )
     """,
     """
@@ -328,7 +341,7 @@ def _grant_id(provider_id: str, grant: PolicySeedGrant) -> str:
 def _bounded_text(value: object) -> None:
     if (
         not isinstance(value, str)
-        or not value
+        or not value.strip()
         or len(value) > 512
         or any(ord(character) < 0x20 or ord(character) == 0x7F for character in value)
     ):

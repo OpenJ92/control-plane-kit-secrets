@@ -145,12 +145,188 @@ class EncryptedSecretStoreTests(unittest.TestCase):
                     "revoke_correlation_id = ? WHERE grant_id = ?",
                     ("2026-10-28T00:00:00+00:00", "policy-admin", "revoke-a", row[0]),
                 )
+                connection.execute(
+                    """
+                    INSERT INTO provider_grants (
+                        grant_id, provider_id, subject, workspace_id, action,
+                        intent, intent_key, origin, granted_by,
+                        grant_correlation_id, granted_at
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, 'command', ?, ?, ?)
+                    """,
+                    (
+                        "command-regrant", "provider-a", "operator-a", "workspace-a",
+                        "secret.resolve", "postgres.password", "postgres.password",
+                        "policy-admin", "grant-b", "2026-10-28T00:01:00+00:00",
+                    ),
+                )
             self.assertNotIn("private-token", repr(_logical_snapshot(paths["db"])))
             before = _logical_snapshot(paths["db"])
+            changed_credentials = (
+                ProviderCredential(
+                    subject="different-operator", token="different-private-token",
+                    grants=(ProviderGrant(
+                        action="secret.metadata", workspace_id="different-workspace",
+                        intents=(),
+                    ),),
+                ),
+            )
             custody.admit_provider_custody(
-                paths["db"], master_key=key, provider_id="provider-a"
+                paths["db"], master_key=key, provider_id="provider-a",
+                credentials=changed_credentials,
             )
             self.assertEqual(before, _logical_snapshot(paths["db"]))
+
+    def test_policy_events_can_record_a_grantless_bounded_failure(self) -> None:
+        custody = self._custody_service()
+        with tempfile.TemporaryDirectory() as directory:
+            paths = _paths(directory)
+            key = _write_key(paths["key"])
+            custody.admit_provider_custody(
+                paths["db"], master_key=key, provider_id="provider-a", credentials=()
+            )
+            with closing(sqlite3.connect(paths["db"])) as connection, connection:
+                connection.execute("PRAGMA foreign_keys = ON")
+                connection.execute(
+                    """
+                    INSERT INTO provider_policy_events (
+                        event_id, provider_id, grant_id, subject, workspace_id,
+                        action, intent, event_kind, actor, correlation_id,
+                        outcome, code, occurred_at
+                    ) VALUES (?, ?, NULL, NULL, NULL, NULL, NULL, ?, ?, ?, ?, ?, ?)
+                    """,
+                    (
+                        "event-denied-list", "provider-a", "grant-list",
+                        "authenticated-non-admin", "correlation-a", "denied",
+                        "policy-admin-required", "2026-10-28T00:00:00+00:00",
+                    ),
+                )
+                row = connection.execute(
+                    "SELECT grant_id, subject, workspace_id, action, intent, "
+                    "event_kind, outcome, code FROM provider_policy_events"
+                ).fetchone()
+                self.assertEqual(
+                    row,
+                    (
+                        None, None, None, None, None, "grant-list", "denied",
+                        "policy-admin-required",
+                    ),
+                )
+                with self.assertRaises(sqlite3.IntegrityError):
+                    connection.execute(
+                        """
+                        INSERT INTO provider_policy_events (
+                            event_id, provider_id, event_kind, actor,
+                            correlation_id, outcome, code, occurred_at
+                        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                        """,
+                        (
+                            "event-unknown-kind", "provider-a", "unknown",
+                            "policy-admin", "correlation-b", "failed",
+                            "unsupported-operation", "2026-10-28T00:00:00+00:00",
+                        ),
+                    )
+
+    def test_v2_seed_corruption_refuses_without_repair(self) -> None:
+        custody = self._custody_service()
+        credentials = (
+            ProviderCredential(
+                subject="operator-a", token="private-token",
+                grants=(ProviderGrant(
+                    action="secret.metadata", workspace_id="workspace-a", intents=()
+                ),),
+            ),
+        )
+        for corruption in ("missing-marker", "tampered-tuple"):
+            with self.subTest(corruption=corruption), tempfile.TemporaryDirectory() as directory:
+                paths = _paths(directory)
+                key = _write_key(paths["key"])
+                custody.admit_provider_custody(
+                    paths["db"], master_key=key, provider_id="provider-a",
+                    credentials=credentials,
+                )
+                with closing(sqlite3.connect(paths["db"])) as connection, connection:
+                    if corruption == "missing-marker":
+                        connection.execute("DELETE FROM provider_policy_seed")
+                    else:
+                        connection.execute(
+                            "UPDATE provider_grants SET subject = ? WHERE origin = 'seed'",
+                            ("tampered-operator",),
+                        )
+                before = _logical_snapshot(paths["db"])
+                with self.assertRaises(custody.ProviderCustodyRejected):
+                    custody.admit_provider_custody(
+                        paths["db"], master_key=key, provider_id="provider-a"
+                    )
+                self.assertEqual(before, _logical_snapshot(paths["db"]))
+
+    def test_policy_schema_enforces_active_tuple_and_command_constraints(self) -> None:
+        custody = self._custody_service()
+        with tempfile.TemporaryDirectory() as directory:
+            paths = _paths(directory)
+            key = _write_key(paths["key"])
+            custody.admit_provider_custody(
+                paths["db"], master_key=key, provider_id="provider-a", credentials=()
+            )
+            with closing(sqlite3.connect(paths["db"])) as connection, connection:
+                grant_values = (
+                    "provider-a", "operator-a", "workspace-a", "secret.metadata",
+                    None, "<none>", "command", "policy-admin", "grant-a",
+                    "2026-10-28T00:00:00+00:00",
+                )
+
+                def insert_grant(grant_id: str, correlation: str) -> None:
+                    connection.execute(
+                        """
+                        INSERT INTO provider_grants (
+                            grant_id, provider_id, subject, workspace_id, action,
+                            intent, intent_key, origin, granted_by,
+                            grant_correlation_id, granted_at
+                        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                        """,
+                        (grant_id, *grant_values[:-2], correlation, grant_values[-1]),
+                    )
+
+                insert_grant("grant-a", "grant-a")
+                with self.assertRaises(sqlite3.IntegrityError):
+                    insert_grant("grant-duplicate", "grant-duplicate")
+                connection.execute(
+                    "UPDATE provider_grants SET revoked_by = ?, "
+                    "revoke_correlation_id = ?, revoked_at = ? WHERE grant_id = ?",
+                    (
+                        "policy-admin", "revoke-a", "2026-10-28T00:01:00+00:00",
+                        "grant-a",
+                    ),
+                )
+                insert_grant("grant-regrant", "grant-regrant")
+
+                command = (
+                    "provider-a", "command-a", "grant", "digest-a", "operator-a",
+                    "workspace-a", "secret.metadata", None, "<none>", 1,
+                    "granted", "provider-policy-granted", "grant-regrant", 2,
+                    "policy-admin", "2026-10-28T00:02:00+00:00",
+                )
+                connection.execute(
+                    "INSERT INTO provider_policy_commands VALUES "
+                    "(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                    command,
+                )
+                with self.assertRaises(sqlite3.IntegrityError):
+                    connection.execute(
+                        "INSERT INTO provider_policy_commands VALUES "
+                        "(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                        command,
+                    )
+                with self.assertRaises(sqlite3.IntegrityError):
+                    connection.execute(
+                        "INSERT INTO provider_policy_commands VALUES "
+                        "(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                        (
+                            "provider-a", "command-b", "grant", "digest-b",
+                            "operator-a", "workspace-a", "secret.metadata", None,
+                            "<none>", -1, "failed", "invalid-revision", None, 2,
+                            "policy-admin", "2026-10-28T00:03:00+00:00",
+                        ),
+                    )
 
     def test_exact_v1_migrates_atomically_and_preserves_retained_secret(self) -> None:
         custody = self._custody_service()
@@ -169,20 +345,47 @@ class EncryptedSecretStoreTests(unittest.TestCase):
             legacy = _create_exact_v1_custody(
                 paths["db"], key=key, provider_id="provider-a"
             )
-            retained = legacy.create_secret(
-                workspace_id="workspace-a", secret_id="retained", value=b"retained-value"
+            audit = SqliteAuditStore(paths["db"])
+            first = legacy.create_secret(
+                workspace_id="workspace-a", secret_id="retained", value=b"retained-v1",
+                labels={"intent": "postgres.password"},
             )
+            latest = legacy.rotate_secret(
+                workspace_id="workspace-a", secret_id="retained", value=b"retained-v2",
+                labels={"intent": "postgres.password"},
+            )
+            legacy.resolve_secret_for_use(
+                workspace_id="workspace-a", secret_id="retained",
+                intent="postgres.password", caller_subject="operator-a",
+                correlation_id="selection-a",
+            )
+            legacy.revoke_secret_version(
+                workspace_id="workspace-a", secret_id="retained",
+                version_id=first.version_id, version_number=first.version_number,
+                caller_subject="operator-a", correlation_id="revoke-a",
+                provider_id="provider-a", audit_store=audit,
+            )
+            legacy.generate_delegation_key(
+                workspace_id="workspace-a", secret_id="generated-key",
+                secret_reference="secret://workspace-secrets/keys/generated",
+                purpose="gateway-probe", intent="gateway.probe-signing-key",
+                issuer="cpk-server", caller_subject="operator-a",
+                correlation_id="generation-a", provider_id="provider-a",
+                audit_store=audit,
+            )
+            retained_before = _pre_policy_rows(paths["db"])
             custody.admit_provider_custody(
                 paths["db"], master_key=key, provider_id="provider-a", credentials=credentials
             )
+            self.assertEqual(retained_before, _pre_policy_rows(paths["db"]))
             restarted, _ = custody.admit_provider_custody(
                 paths["db"], master_key=key, provider_id="provider-a"
             )
             resolved = restarted.resolve_secret(
                 workspace_id="workspace-a", secret_id="retained"
             )
-            self.assertEqual(resolved.metadata.version_id, retained.version_id)
-            self.assertEqual(resolved.value, b"retained-value")
+            self.assertEqual(resolved.metadata.version_id, latest.version_id)
+            self.assertEqual(resolved.value, b"retained-v2")
 
     def test_v1_missing_seed_and_failed_migration_preserve_exact_snapshot(self) -> None:
         custody = self._custody_service()
@@ -214,6 +417,24 @@ class EncryptedSecretStoreTests(unittest.TestCase):
                     )
             self.assertEqual(before, _logical_snapshot(paths["db"]))
 
+            original_verify = custody._verify_binding
+
+            def fail_final_verification(connection, *, master_key, provider_id, version):
+                original_verify(
+                    connection, master_key=master_key,
+                    provider_id=provider_id, version=version,
+                )
+                if version == 2:
+                    raise custody.ProviderCustodyRejected()
+
+            with patch.object(custody, "_verify_binding", fail_final_verification):
+                with self.assertRaises(custody.ProviderCustodyRejected):
+                    custody.admit_provider_custody(
+                        paths["db"], master_key=key, provider_id="provider-a",
+                        credentials=(),
+                    )
+            self.assertEqual(before, _logical_snapshot(paths["db"]))
+
     def test_policy_seed_rejects_wildcards_and_ambiguous_duplicate_subjects(self) -> None:
         custody = self._custody_service()
         exact = ProviderGrant(
@@ -224,6 +445,32 @@ class EncryptedSecretStoreTests(unittest.TestCase):
             (ProviderCredential(subject="operator", token="a", grants=(
                 ProviderGrant(action="secret.resolve", workspace_id="*", intents=("postgres.password",)),
             )),),
+            (ProviderCredential(subject="operator", token="a", grants=(
+                ProviderGrant(action="*", workspace_id="workspace-a", intents=()),
+            )),),
+            (ProviderCredential(subject="operator", token="a", grants=(
+                ProviderGrant(action="secret.resolve", workspace_id="workspace-a", intents=("*",)),
+            )),),
+            (ProviderCredential(subject="operator", token="a", grants=(
+                ProviderGrant(action="secret.unknown", workspace_id="workspace-a", intents=()),
+            )),),
+            (ProviderCredential(subject="operator", token="a", grants=(
+                ProviderGrant(action="secret.metadata", workspace_id="workspace-a", intents=("postgres.password",)),
+            )),),
+            (ProviderCredential(subject="operator", token="a", grants=(
+                ProviderGrant(action="secret.generate-delegation-key", workspace_id="workspace-a", intents=("postgres.password",)),
+            )),),
+            (ProviderCredential(subject="   ", token="a", grants=()),),
+            (ProviderCredential(subject="operator", token="a", grants=(
+                ProviderGrant(action="secret.metadata", workspace_id="   ", intents=()),
+            )),),
+            (ProviderCredential(subject="operator", token="a", grants=(
+                ProviderGrant(action="   ", workspace_id="workspace-a", intents=()),
+            )),),
+            (ProviderCredential(subject="operator", token="a", grants=(
+                ProviderGrant(action="secret.resolve", workspace_id="workspace-a", intents=("   ",)),
+            )),),
+            (ProviderCredential(subject="operator\nadmin", token="a", grants=()),),
             (ProviderCredential(subject="operator", token="a", grants=(exact,)),
              ProviderCredential(subject="operator", token="b", grants=())),
         )
@@ -241,6 +488,47 @@ class EncryptedSecretStoreTests(unittest.TestCase):
                     self.assertEqual(
                         connection.execute("SELECT COUNT(*) FROM sqlite_schema").fetchone()[0], 0
                     )
+
+    def test_policy_seed_is_invariant_to_token_order_and_identical_deduplication(self) -> None:
+        custody = self._custody_service()
+        metadata = ProviderGrant(
+            action="secret.metadata", workspace_id="workspace-a", intents=()
+        )
+        resolve = ProviderGrant(
+            action="secret.resolve", workspace_id="workspace-a",
+            intents=("postgres.password",),
+        )
+        variants = (
+            (
+                ProviderCredential(subject="operator-a", token="token-a", grants=(metadata,)),
+                ProviderCredential(subject="operator-b", token="token-b", grants=(resolve,)),
+                ProviderCredential(subject="operator-a", token="token-c", grants=(metadata,)),
+            ),
+            (
+                ProviderCredential(subject="operator-b", token="changed-b", grants=(resolve,)),
+                ProviderCredential(subject="operator-a", token="changed-a", grants=(metadata,)),
+            ),
+        )
+        observed = []
+        with tempfile.TemporaryDirectory() as directory:
+            for index, credentials in enumerate(variants):
+                path = Path(directory, f"seed-{index}.sqlite3")
+                key = _write_key(Path(directory, f"key-{index}"))
+                custody.admit_provider_custody(
+                    path, master_key=key, provider_id="provider-a",
+                    credentials=credentials,
+                )
+                with closing(sqlite3.connect(path)) as connection:
+                    observed.append((
+                        connection.execute(
+                            "SELECT seed_digest FROM provider_policy_seed"
+                        ).fetchone()[0],
+                        tuple(connection.execute(
+                            "SELECT grant_id, subject, workspace_id, action, intent "
+                            "FROM provider_grants ORDER BY grant_id"
+                        )),
+                    ))
+        self.assertEqual(observed[0], observed[1])
 
     def test_provider_admission_rejects_incompatible_unbound_and_tampered_state(self) -> None:
         custody = self._custody_service()
@@ -311,6 +599,66 @@ class EncryptedSecretStoreTests(unittest.TestCase):
                 before = _logical_snapshot(paths["db"])
                 custody.admit_provider_custody(paths["db"], master_key=key, provider_id=winner)
                 self.assertTrue(before == _logical_snapshot(paths["db"]), "winner restart rewrote binding")
+
+    def test_retained_v1_admission_is_serialized_and_refuses_inexact_identity(self) -> None:
+        custody = self._custody_service()
+        with tempfile.TemporaryDirectory() as directory:
+            paths = _paths(directory)
+            key = _write_key(paths["key"])
+            wrong_key = _write_key(Path(directory, "wrong.key"))
+            _create_exact_v1_custody(
+                paths["db"], key=key, provider_id="provider-a"
+            )
+            for candidate_key, provider_id in (
+                (wrong_key, "provider-a"),
+                (key, "provider-b"),
+            ):
+                before = _logical_snapshot(paths["db"])
+                with self.assertRaises(custody.ProviderCustodyRejected):
+                    custody.admit_provider_custody(
+                        paths["db"], master_key=candidate_key,
+                        provider_id=provider_id, credentials=(),
+                    )
+                self.assertEqual(before, _logical_snapshot(paths["db"]))
+
+            barrier = Barrier(2)
+
+            def migrate() -> None:
+                barrier.wait()
+                custody.admit_provider_custody(
+                    paths["db"], master_key=key, provider_id="provider-a",
+                    credentials=(),
+                )
+
+            with ThreadPoolExecutor(max_workers=2) as executor:
+                futures = [executor.submit(migrate) for _ in range(2)]
+                for future in futures:
+                    future.result()
+            before = _logical_snapshot(paths["db"])
+            custody.admit_provider_custody(
+                paths["db"], master_key=key, provider_id="provider-a"
+            )
+            self.assertEqual(before, _logical_snapshot(paths["db"]))
+
+        for drift in ("extra", "partial"):
+            with self.subTest(drift=drift), tempfile.TemporaryDirectory() as directory:
+                paths = _paths(directory)
+                key = _write_key(paths["key"])
+                _create_exact_v1_custody(
+                    paths["db"], key=key, provider_id="provider-a"
+                )
+                with closing(sqlite3.connect(paths["db"])) as connection, connection:
+                    if drift == "extra":
+                        connection.execute("CREATE TABLE unexpected_v1_object (id TEXT)")
+                    else:
+                        connection.execute("DROP INDEX idx_audit_records_reference")
+                before = _logical_snapshot(paths["db"])
+                with self.assertRaises(custody.ProviderCustodyRejected):
+                    custody.admit_provider_custody(
+                        paths["db"], master_key=key, provider_id="provider-a",
+                        credentials=(),
+                    )
+                self.assertEqual(before, _logical_snapshot(paths["db"]))
 
     def test_failed_initialization_rolls_back_all_initial_schema(self) -> None:
         custody = self._custody_service()
@@ -997,6 +1345,21 @@ def _tamper_labels(database_path: Path, *, labels_json: str) -> None:
 def _logical_snapshot(path: Path) -> tuple[str, ...]:
     with closing(sqlite3.connect(path)) as connection:
         return tuple(connection.iterdump())
+
+
+def _pre_policy_rows(path: Path) -> dict[str, tuple[tuple[object, ...], ...]]:
+    tables = (
+        "secret_versions",
+        "secret_resolution_selections",
+        "delegation_key_generations",
+        "secret_version_revocations",
+        "audit_records",
+    )
+    with closing(sqlite3.connect(path)) as connection:
+        return {
+            table: tuple(connection.execute(f"SELECT * FROM {table} ORDER BY rowid"))
+            for table in tables
+        }
 
 
 if __name__ == "__main__":
