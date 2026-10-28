@@ -30,6 +30,8 @@ from control_plane_kit_secrets.crypto import (
     encode_master_key_for_file,
     load_master_key_file,
 )
+from control_plane_kit_secrets.custody import admit_provider_custody
+from control_plane_kit_secrets.provider_policy import ProviderPolicyStore
 from control_plane_kit_secrets.models import (
     DelegationKeyGenerationConflict, SecretMetadataInvalid, SecretRevoked, SecretTampered,
 )
@@ -521,39 +523,33 @@ class _Fixture:
         )
         self.master_key = load_master_key_file(key_path, version="test")
         self.database_path = self.base / "secrets.sqlite3"
-        self.store = EncryptedSecretStore(
-            self.database_path,
-            master_key=self.master_key,
-        )
-        self.store.initialize()
-        self.audit = SqliteAuditStore(self.database_path)
-        self.audit.initialize()
         intents = (tuple(intent for _purpose, intent in FAMILIES)
                    if allowed_intents is None else allowed_intents)
+        credentials = (
+            ProviderCredential(
+                subject="generator", token="generation-token",
+                grants=(ProviderGrant(
+                    "secret.generate-delegation-key", "workspace-1", intents,
+                ),),
+            ),
+            ProviderCredential(
+                subject="resolver", token="resolver-token",
+                grants=(ProviderGrant("secret.resolve", "workspace-1", intents),),
+            ),
+        )
+        self.store, self.audit = admit_provider_custody(
+            self.database_path, master_key=self.master_key,
+            provider_id="provider-a", credentials=credentials,
+        )
+        policy_store = ProviderPolicyStore(self.database_path, provider_id="provider-a")
         self.client = TestClient(
             create_app(
                 control=ControlAuthority().configuration(control_module),
                 clock=lambda: 150,
-                initialize_provider=lambda: (self.store, self.audit, (
-                    ProviderCredential(
-                        subject="generator",
-                        token="generation-token",
-                        grants=(
-                            ProviderGrant(
-                                "secret.generate-delegation-key",
-                                "workspace-1",
-                                intents,
-                            ),
-                        ),
-                    ),
-                    ProviderCredential(
-                        subject="resolver",
-                        token="resolver-token",
-                        grants=(
-                            ProviderGrant("secret.resolve", "workspace-1", intents),
-                        ),
-                    ),
-                )),
+                provider_id="provider-a",
+                initialize_provider=lambda: (
+                    self.store, self.audit, credentials, policy_store,
+                ),
             )
         )
 

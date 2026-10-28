@@ -9,7 +9,6 @@ from pathlib import Path
 from control_plane_kit_secrets.auth import (
     ProviderAuthenticationError,
     ProviderAuthorizer,
-    SecretUseDenied,
 )
 from control_plane_kit_secrets.bootstrap import (
     ProviderConfigurationError,
@@ -18,7 +17,7 @@ from control_plane_kit_secrets.bootstrap import (
 
 
 class ProviderBootstrapTests(unittest.TestCase):
-    def test_optional_fields_and_wildcards_keep_their_authority(self) -> None:
+    def test_optional_seed_grants_are_not_runtime_authority(self) -> None:
         empty = _load_document([])
         self.assertEqual(empty, ())
         with self.assertRaises(ProviderAuthenticationError):
@@ -32,15 +31,9 @@ class ProviderBootstrapTests(unittest.TestCase):
                     item["grants"] = grants
                 credential, = _load_document([item])
                 authorizer = ProviderAuthorizer((credential,))
-                has_grant = bool(grants)
-                permits_intent = has_grant and grants[0].get("intents", ["*"]) != []
-                for intent in (None, "postgres.password"):
-                    permitted = has_grant if intent is None else permits_intent
-                    if permitted:
-                        authorizer.require(credential, action="secret.resolve", workspace_id="any", intent=intent)
-                    else:
-                        with self.assertRaises(SecretUseDenied):
-                            authorizer.require(credential, action="secret.resolve", workspace_id="any", intent=intent)
+                self.assertIs(authorizer.authenticate("Bearer fixture"), credential)
+                self.assertFalse(hasattr(authorizer, "require"))
+                self.assertEqual(len(credential.grants), 0 if grants is None else len(grants))
 
     def test_exact_text_repeated_grants_and_duplicate_subjects_remain_lawful(self) -> None:
         grant = {"action": "future.action", "workspace_id": " équipe ", "intents": ["future.intent", "future.intent"]}
@@ -55,10 +48,33 @@ class ProviderBootstrapTests(unittest.TestCase):
         authorizer = ProviderAuthorizer((first, second))
         self.assertIs(authorizer.authenticate("Bearer internal space"), first)
         self.assertIs(authorizer.authenticate("Bearer " + "x" * 4097), second)
-        authorizer.require(first, action="future.action", workspace_id=" équipe ", intent="future.intent")
-        for credential in (first, second):
-            with self.assertRaises(SecretUseDenied):
-                authorizer.require(credential, action="secret.resolve", workspace_id="any", intent="postgres.password")
+        self.assertFalse(hasattr(authorizer, "require"))
+
+    def test_policy_admin_capability_is_closed_independent_and_redacted(self) -> None:
+        credential, = _load_document([{
+            "subject": "policy-admin",
+            "token": "private-admin-token",
+            "capabilities": ["secrets.policy-admin"],
+            "grants": [],
+        }])
+        self.assertEqual(credential.capabilities, ("secrets.policy-admin",))
+        self.assertEqual(credential.grants, ())
+        self.assertNotIn("private-admin-token", repr(credential))
+        for capabilities in (
+            ["unknown"],
+            ["secrets.policy-admin", "secrets.policy-admin"],
+            [""],
+            ["   "],
+            ["secrets.policy-admin\n"],
+            "secrets.policy-admin",
+        ):
+            with self.subTest(capabilities=repr(capabilities)):
+                with self.assertRaises(ProviderConfigurationError):
+                    _load_document([{
+                        "subject": "policy-admin",
+                        "token": "private-admin-token",
+                        "capabilities": capabilities,
+                    }])
 
     def test_shapes_unknown_keys_missing_fields_and_duplicate_tokens_reject(self) -> None:
         valid = {"subject": "client", "token": "fixture"}

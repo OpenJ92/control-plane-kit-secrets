@@ -164,7 +164,7 @@ class ReceiverAdoptionTests(unittest.TestCase):
         initializations = []
         def initialize():
             initializations.append(True)
-            return object(), object(), ()
+            return object(), object(), (), object()
         app = api.create_app(control=configuration, initialize_provider=initialize, clock=lambda: 150)
         self.assertEqual(initializations, [True])
         encoded = control.encode_secrets_control_configuration(configuration)
