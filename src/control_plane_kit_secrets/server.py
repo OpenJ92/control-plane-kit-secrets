@@ -26,7 +26,10 @@ def app_from_environment(environment: Mapping[str, str] | None = None) -> object
         except (SecretCryptoError, ProviderConfigurationError):
             raise ProviderConfigurationError() from None
         store, audit_store = admit_provider_custody(
-            database_path, master_key=master_key, provider_id=provider_id
+            database_path,
+            master_key=master_key,
+            provider_id=provider_id,
+            credentials=credentials,
         )
         return store, audit_store, credentials
 

@@ -32,6 +32,7 @@ from .models import (
     SecretTampered,
     SecretVersionRevocationConflict,
 )
+from .provider_policy import ALLOWED_SECRET_USE_INTENTS
 from .store import EncryptedSecretStore
 from .control import (
     ReceiverNodeControlConfiguration,
@@ -45,28 +46,6 @@ MAX_SECRET_REFERENCE_CHARS = 1024
 _IDENTIFIER = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:-]{0,199}$")
 _REFERENCE_PROVIDER = re.compile(r"^[a-z][a-z0-9-]{0,62}$")
 _REFERENCE_SEGMENT = re.compile(r"^[A-Za-z0-9._-]{1,128}$")
-ALLOWED_SECRET_USE_INTENTS = frozenset(
-    {
-        "application.control-token",
-        "cloudflare.api-token",
-        "cloudflare.tunnel-token",
-        "docker.local-socket-access-marker",
-        "docker.remote-tls.ca-certificate",
-        "docker.remote-tls.client-certificate",
-        "docker.remote-tls.client-key",
-        "gateway.probe-signing-key",
-        "gateway.node-control-transit-signing-key",
-        "gateway.node-health-read-transit-signing-key",
-        "oci.pull-credential",
-        "postgres.password",
-        "secrets.custody-root-key",
-        "secrets.provider-credentials-document",
-        "workload.node-control-signing-key",
-        "workload.node-health-read-signing-key",
-    }
-)
-
-
 class SecretWriteRequest(BaseModel):
     value_base64: str = Field(min_length=1)
     intent: str
