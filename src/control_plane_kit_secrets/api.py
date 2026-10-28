@@ -8,8 +8,11 @@ import time
 from typing import Any, Callable
 from urllib.parse import urlsplit
 
-from fastapi import Depends, FastAPI, Header, HTTPException
-from pydantic import BaseModel, Field
+from fastapi import Depends, FastAPI, Header, HTTPException, Request
+from fastapi.exception_handlers import request_validation_exception_handler
+from fastapi.exceptions import RequestValidationError
+from fastapi.responses import JSONResponse
+from pydantic import BaseModel, ConfigDict, Field
 from control_plane_kit_server_sdk.fastapi import install_cpk_wrapper
 
 from .audit import AuditUnavailable, SqliteAuditStore, audit_record
@@ -59,6 +62,7 @@ MAX_SECRET_REFERENCE_CHARS = 1024
 _IDENTIFIER = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:-]{0,199}$")
 _REFERENCE_PROVIDER = re.compile(r"^[a-z][a-z0-9-]{0,62}$")
 _REFERENCE_SEGMENT = re.compile(r"^[A-Za-z0-9._-]{1,128}$")
+_POLICY_REVOKE_PATH = re.compile(r"^/v1/provider-policy/grants/[^/]+/revoke$")
 class SecretWriteRequest(BaseModel):
     value_base64: str = Field(min_length=1)
     intent: str
@@ -105,6 +109,8 @@ class DelegationKeyGenerateRequest(BaseModel):
 
 
 class PolicyGrantRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
     subject: str = Field(min_length=1, max_length=512)
     workspace_id: str = Field(min_length=1, max_length=512)
     action: str = Field(min_length=1, max_length=512)
@@ -135,6 +141,26 @@ def create_app(
 ) -> FastAPI:
     control = require_secrets_control_configuration(control)
     app = FastAPI(title="control-plane-kit-secrets")
+
+    @app.exception_handler(RequestValidationError)
+    async def bounded_policy_command_validation(
+        request: Request,
+        exc: RequestValidationError,
+    ):
+        if (
+            request.url.path == "/v1/provider-policy/grants"
+            or _POLICY_REVOKE_PATH.fullmatch(request.url.path) is not None
+        ):
+            return JSONResponse(
+                status_code=422,
+                content={
+                    "detail": {
+                        "outcome": "malformed",
+                        "code": "provider-policy-request-invalid",
+                    }
+                },
+            )
+        return await request_validation_exception_handler(request, exc)
 
     def credential(authorization: str | None = Header(default=None)) -> ProviderCredential:
         try:
