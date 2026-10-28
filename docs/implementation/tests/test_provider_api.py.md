@@ -9,6 +9,8 @@ Related owners: [api.py](../../../src/control_plane_kit_secrets/api.py), [auth.p
 
 #71 adds administrative command/read coverage, success and rejected-command replay/revision/conflict semantics, strict revision input, process-reconstruction loss of admin capability including mutation replay, immediate grant/revoke enforcement for every action, admitted-before-revoke linearization, durable-policy unavailable audit categorization and proof that every secret action consults durable policy without static fallback. Valid-correlation malformed reads are audited; unusable correlations reject without fabricated identity. All fixtures use synthetic credentials and assert bounded nonsecret responses/events.
 
+The Gate 2 correction injects unsupported provider, actor, endpoint, credential, method and socket-path fields into otherwise valid grant and revoke commands. It requires framework rejection before revision, grant/revocation, command, policy-event or provider-audit mutation, while known-field commands still succeed. Response and captured-log-record checks prove the rejected synthetic credential, bearer and URL sentinels are not echoed. A malformed policy-list query retains FastAPI's default validation response and makes no policy mutation, proving the bounded command handler does not replace unrelated validation. This is pre-command validation, not an admitted policy command or a new audit-event category.
+
 The #29 closed allowlist target appends only the two exact health signing intents;
 all existing entries and API assertions remain. The separate source step adds
 those same entries; updated dependencies alone do not admit provider intents.

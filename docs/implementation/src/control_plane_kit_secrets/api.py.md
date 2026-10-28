@@ -15,7 +15,7 @@ Policy command revisions are strict signed-64-bit JSON integers. A usable policy
 
 Only authorized resolve deliberately returns recoverable material as value_base64; base64 is not redaction. Other successful responses contain metadata or public key identity. Metadata includes labels and key fingerprint/version, so it is not a universal safe-publication surface.
 
-Handled failures use fixed outcome/code details. No global scrubber replaces framework model-validation errors or arbitrary exception chains. The decoded value has a 64 KiB cap; this is not a whole HTTP request-body bound.
+Handled failures use fixed outcome/code details. Policy grant/revoke command bodies are closed to their declared fields. Their framework validation failures receive one route-specific bounded response so rejected authority, credential and transport values are not reflected; unrelated framework validation still uses FastAPI's default handler. No global scrubber replaces arbitrary exception chains. The decoded value has a 64 KiB cap; this is not a whole HTTP request-body bound.
 
 Resolve appends audit before returning material, but its version-selection transaction may already be committed. Generation and exact-version revocation couple audit and mutation inside the store transaction. Ordinary write/rotate/whole-reference revoke commit before separate audit appends: audit failure does not imply no mutation. Audit coverage differs among route branches, authentication failures and framework rejection paths.
 
