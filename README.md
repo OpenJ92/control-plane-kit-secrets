@@ -9,11 +9,11 @@ Interpreters may resolve and materialize values at the IO boundary.
 `control-plane-kit-secrets` stores encrypted secret values, versions and revokes
 them, and audits provider-local access.
 
-Current status: provider-local audit. #1166 added provider-local encrypted
-records, versions, rotation, revocation, and tamper-safe load behavior. #1167
-added a narrow FastAPI boundary for authenticated write, resolve, rotate,
-revoke, and metadata operations. #1168 adds provider-local audit records and
-fail-closed resolve behavior when audit persistence is unavailable.
+Current status: encrypted provider-local custody, bounded audit, and durable
+exact provider policy. The provider authenticates bootstrap credentials, then
+authorizes each secret action from current durable subject/workspace/action/
+intent-or-none grants. Separately admitted policy administrators can grant,
+revoke, inspect, and reconcile that policy without restarting the application.
 
 ## Delegation Key Generation
 
@@ -49,10 +49,11 @@ The newly adopted surface-read and health families use exactly these pairs:
 Surface read intentionally reuses the legacy gateway probe signing intent. It
 does not create a new secret-use intent or broaden the other admitted families.
 
-Generation and resolution still require their separate action/workspace/intent
-grants. Existing scoped write/rotate also admit these intent values; wildcard
-grants retain their existing meaning. This provider support does not authorize
-Operations health-key generation or construct/sign health requests.
+Generation and resolution still require separate exact durable
+action/workspace/intent grants. Existing scoped write/rotate also admit these
+intent values under their own exact grants. Wildcards are not durable policy.
+This provider support does not authorize Operations health-key generation or
+construct/sign health requests.
 
 ## Exact Version Revocation
 
@@ -98,18 +99,30 @@ roots and must not resolve recursively through this provider.
 
 Both sources accept a UTF-8 JSON array bounded to 64 KiB of encoded bytes. Each
 credential requires `subject` and `token`; optional `grants` defaults to `[]`.
-Each grant requires `action` and `workspace_id`; optional `intents` defaults to
-`["*"]`. An empty credential array authenticates nobody. Empty grants authorize
-nothing; empty intents deny intent-qualified requests while preserving actions
-that do not carry an intent. Explicit workspace and intent wildcards remain
-supported. Unknown nonmatching action/intent text grants no current capability.
+Credential grants are one-time seed input, not runtime authority. Each seed
+grant requires an exact supported `action` and exact `workspace_id`.
+Intent-qualified actions require explicit exact supported `intents`; intentless
+actions use an empty list. When constructing the one-time seed for fresh custody
+or exact v1 migration, wildcards, unknown actions/intents, and ambiguous
+same-subject seed sets fail admission. A retained v2 restart verifies the stored
+immutable seed and never revalidates or reapplies current credential `grants` as
+authority. An empty credential array authenticates nobody, and empty grants seed
+no secret-use authority.
+
+Optional credential `capabilities` is a separate closed bootstrap list. Its
+only admitted value is `secrets.policy-admin`. This capability authorizes the
+policy administration routes but confers no secret-use grant, and no durable
+grant can create it. Removing the last administrator is an operator recovery
+condition. Credential/capability changes are read when the application is
+reconstructed; no hot reload is claimed.
 
 All these fields and intent entries must be strings, not whitespace-only, and
 contain no C0 (`U+0000..U+001F`) or DEL (`U+007F`) controls. Tokens must also be
 ASCII with no leading/trailing whitespace; internal spaces are accepted. Accepted
 text is preserved exactly, without coercion or normalization. There is no
 independent token or collection size limit beyond the document ceiling. Duplicate
-JSON keys, unknown credential/grant fields, and duplicate bearer tokens reject.
+JSON keys, unknown credential/grant fields, unknown capabilities, duplicate
+capabilities, and duplicate bearer tokens reject.
 Distinct tokens may share a subject; repeated grants/intents remain lawful.
 These are document-loader rules; programmatic auth constructors are unchanged.
 
@@ -146,17 +159,21 @@ reads (V2 requests/grants, V3 results) and V2 liveness. No readiness, variables,
 commands or private-provider permissions are granted by this configuration.
 
 The provider then admits custody under one explicit SQLite transaction. Fresh or
-positively object-free storage receives the complete custody/audit schema and one
-authenticated root-key/provider/schema binding together. A retained bound store
-must match the exact required schema and authenticate that binding before the app
-can become ready. Compatible restart performs no logical schema or row writes.
-The effective provider ID is compared exactly: omission defaults to
-`local-dev-provider`; explicitly supplied strings, including empty, stay distinct.
-Credential documents remain independently configurable bootstrap inputs.
+positively object-free storage receives the complete v2 custody/audit/policy
+schema, exact immutable seed, and one authenticated root-key/provider/schema
+binding together. An exact v1 retained store is migrated to v2 atomically after
+its old binding and schema are authenticated; migration failure preserves the
+exact prior committed state. A retained v2 store must match the exact required
+schema, binding, provider and immutable seed digest before the app can become
+ready. Compatible restart performs no logical schema or row writes and never
+unions configured seed grants back over durable revocations.
+The effective provider ID is a bounded nonblank value compared exactly; omission
+defaults to `local-dev-provider`. Credential documents remain independently
+configurable bootstrap inputs.
 
-Existing unbound databases, including empty legacy schemas, are refused unchanged;
-there is no automatic adoption or migration. Wrong key/provider, binding tamper or
-schema mismatch exits with `secret provider custody is incompatible`. Unresolved
+Existing unbound databases and inexact legacy schemas are refused unchanged;
+there is no unbound-data adoption. Wrong key/provider, binding tamper or schema
+mismatch exits with `secret provider custody is incompatible`. Unresolved
 SQLite locking, recovery or transaction failure exits with `secret provider custody
 is unavailable`. Both errors suppress underlying sensitive details; neither causes
 an internal retry, repair, reset or rekey. A later explicit start inspects current
@@ -169,6 +186,75 @@ protection against hostile filesystem replacement. Startup checks the binding an
 schema, not every retained ciphertext; resolution still authenticates individual
 secret rows. Direct store APIs retain their existing behavior and do not claim
 provider startup admission. No new status endpoint exposes binding/key evidence.
+
+## Durable Provider Policy Administration
+
+Policy administration uses the independently authenticated
+`secrets.policy-admin` credential capability. Authentication details are omitted
+from these synthetic examples. Endpoint, credential, actor, provider ID, and
+arbitrary method fields are not part of the supported public request contract
+and cannot select transport, credentials, provider identity, or authenticated
+actor authority.
+
+Grant one exact tuple at the currently observed policy revision:
+
+```http
+POST /v1/provider-policy/grants
+Content-Type: application/json
+
+{
+  "subject": "workspace-agent-a",
+  "workspace_id": "workspace-a",
+  "action": "secret.resolve",
+  "intent": "postgres.password",
+  "expected_revision": 1,
+  "correlation_id": "policy-command-001"
+}
+```
+
+The bounded result includes the new grant identity, operation, full nonsecret
+tuple, expected/resulting revisions, authenticated provider-client subject,
+outcome/code, correlation, and occurrence time. Revoke rechecks both that exact
+identity and tuple:
+
+```http
+POST /v1/provider-policy/grants/{grant_id}/revoke
+Content-Type: application/json
+
+{
+  "subject": "workspace-agent-a",
+  "workspace_id": "workspace-a",
+  "action": "secret.resolve",
+  "intent": "postgres.password",
+  "expected_revision": 2,
+  "correlation_id": "policy-command-002"
+}
+```
+
+`GET /v1/provider-policy/grants/{grant_id}` reads one exact record. The bounded
+current list supports exact subject/workspace/action filters, explicit intent
+mode `any`, `none`, or `exact`, limit 1–100, and an `after_grant_id` cursor. Both
+require a separate bounded `X-Correlation-ID` for their policy event. To
+reconcile a lost mutation response without redispatching it, use:
+
+```http
+GET /v1/provider-policy/commands/policy-command-001
+X-Correlation-ID: policy-read-001
+```
+
+Grant/revoke atomically records the row change, monotonic signed-64-bit policy
+revision, canonical command result, and bounded event. Exact correlation replay
+returns the original success or conflict without writes. Changed reuse,
+stale revision, active duplicate, or stale/incorrect revoke conflicts without
+changing authority. Regrant after revocation creates a new grant identity; the
+old identity cannot revoke it. Reads append their required event in the same
+SQLite transaction before returning data.
+
+If a provider response is lost, read the exact correlation result before any
+new mutation; do not blindly retry or infer rollback. A committed revoke denies
+authorization checks begun afterward, but does not cancel a request already
+admitted. Responses and history contain no bearer values, secret material,
+protected credential document, or private replay digest.
 
 Secret-version rows record key fingerprint and key-version evidence; the custody
 binding separately authenticates provider/schema identity. Neither stores the raw
@@ -227,7 +313,8 @@ custody/auth/audit behavior remain the provider's contracts.
 Production now requires the public receiver and installs authenticated SDK static
 and liveness routes. Programmatic `api.create_app` callers supply required
 `control` plus `initialize_provider`, returning the existing store/audit pair and
-admitted provider credentials. Every handler is bound before the app returns.
+admitted provider credentials plus the provider-bound durable policy store.
+Every handler is bound before the app returns.
 SDK reads use separate typed authority and perform no provider authentication,
 secret access or audit writes. Liveness means the initialized process is serving;
 neither it nor the unchanged constant legacy readiness response proves current
