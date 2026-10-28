@@ -102,9 +102,12 @@ credential requires `subject` and `token`; optional `grants` defaults to `[]`.
 Credential grants are one-time seed input, not runtime authority. Each seed
 grant requires an exact supported `action` and exact `workspace_id`.
 Intent-qualified actions require explicit exact supported `intents`; intentless
-actions use an empty list. Wildcards, unknown actions/intents, and ambiguous
-same-subject seed sets fail startup admission. An empty credential array
-authenticates nobody, and empty grants seed no secret-use authority.
+actions use an empty list. When constructing the one-time seed for fresh custody
+or exact v1 migration, wildcards, unknown actions/intents, and ambiguous
+same-subject seed sets fail admission. A retained v2 restart verifies the stored
+immutable seed and never revalidates or reapplies current credential `grants` as
+authority. An empty credential array authenticates nobody, and empty grants seed
+no secret-use authority.
 
 Optional credential `capabilities` is a separate closed bootstrap list. Its
 only admitted value is `secrets.policy-admin`. This capability authorizes the
@@ -164,9 +167,9 @@ exact prior committed state. A retained v2 store must match the exact required
 schema, binding, provider and immutable seed digest before the app can become
 ready. Compatible restart performs no logical schema or row writes and never
 unions configured seed grants back over durable revocations.
-The effective provider ID is compared exactly: omission defaults to
-`local-dev-provider`; explicitly supplied strings, including empty, stay distinct.
-Credential documents remain independently configurable bootstrap inputs.
+The effective provider ID is a bounded nonblank value compared exactly; omission
+defaults to `local-dev-provider`. Credential documents remain independently
+configurable bootstrap inputs.
 
 Existing unbound databases and inexact legacy schemas are refused unchanged;
 there is no unbound-data adoption. Wrong key/provider, binding tamper or schema
@@ -188,8 +191,10 @@ provider startup admission. No new status endpoint exposes binding/key evidence.
 
 Policy administration uses the independently authenticated
 `secrets.policy-admin` credential capability. Authentication details are omitted
-from these synthetic examples; callers cannot provide an endpoint, credential,
-actor, provider ID, or arbitrary method in the request body.
+from these synthetic examples. Endpoint, credential, actor, provider ID, and
+arbitrary method fields are not part of the supported public request contract
+and cannot select transport, credentials, provider identity, or authenticated
+actor authority.
 
 Grant one exact tuple at the currently observed policy revision:
 
