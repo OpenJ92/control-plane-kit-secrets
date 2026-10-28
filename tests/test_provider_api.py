@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import base64
+import logging
 import os
 import tempfile
 import unittest
@@ -963,6 +964,104 @@ class ProviderApiTests(unittest.TestCase):
             self.assertEqual(revoked.status_code, 200, revoked.text)
             self.assertEqual(revoked.json()["resulting_revision"], 3)
 
+    def test_policy_commands_reject_unsupported_authority_and_transport_fields(self) -> None:
+        with _policy_client() as fixture:
+            grant_request = {
+                "subject": "dynamic-client",
+                "workspace_id": "workspace-1",
+                "action": "secret.metadata",
+                "intent": None,
+                "expected_revision": 1,
+                "correlation_id": "grant-closed-input",
+            }
+            forbidden_fields = {
+                "provider_id": "forbidden-provider-sentinel",
+                "actor": "forbidden-actor-sentinel",
+                "endpoint": "https://forbidden-endpoint.invalid/private",
+                "credential": "Bearer forbidden-credential-sentinel",
+                "method": "forbidden-method-sentinel",
+                "socket_path": "/run/forbidden-socket-sentinel.sock",
+            }
+            records: list[logging.LogRecord] = []
+
+            class _CaptureHandler(logging.Handler):
+                def emit(self, record: logging.LogRecord) -> None:
+                    records.append(record)
+
+            logger = logging.getLogger()
+            previous_level = logger.level
+            handler = _CaptureHandler()
+            logger.addHandler(handler)
+            logger.setLevel(logging.DEBUG)
+            try:
+                for field, sentinel in forbidden_fields.items():
+                    with self.subTest(operation="grant", field=field):
+                        before = fixture.policy_state_snapshot()
+                        audit_before = fixture.audit_rows()
+                        response = fixture.client.post(
+                            "/v1/provider-policy/grants",
+                            headers=fixture.headers("admin-token"),
+                            json={**grant_request, field: sentinel},
+                        )
+                        self.assertEqual(response.status_code, 422, response.text)
+                        self.assertEqual(response.json(), {
+                            "detail": {
+                                "outcome": "malformed",
+                                "code": "provider-policy-request-invalid",
+                            }
+                        })
+                        self.assertEqual(fixture.policy_state_snapshot(), before)
+                        self.assertEqual(fixture.audit_rows(), audit_before)
+                        self.assertNotIn(sentinel, response.text)
+
+                granted = fixture.client.post(
+                    "/v1/provider-policy/grants",
+                    headers=fixture.headers("admin-token"),
+                    json=grant_request,
+                )
+                self.assertEqual(granted.status_code, 200, granted.text)
+                grant_id = granted.json()["grant_id"]
+                revoke_request = {
+                    **grant_request,
+                    "expected_revision": 2,
+                    "correlation_id": "revoke-closed-input",
+                }
+
+                for field, sentinel in forbidden_fields.items():
+                    with self.subTest(operation="revoke", field=field):
+                        before = fixture.policy_state_snapshot()
+                        audit_before = fixture.audit_rows()
+                        response = fixture.client.post(
+                            f"/v1/provider-policy/grants/{grant_id}/revoke",
+                            headers=fixture.headers("admin-token"),
+                            json={**revoke_request, field: sentinel},
+                        )
+                        self.assertEqual(response.status_code, 422, response.text)
+                        self.assertEqual(response.json(), {
+                            "detail": {
+                                "outcome": "malformed",
+                                "code": "provider-policy-request-invalid",
+                            }
+                        })
+                        self.assertEqual(fixture.policy_state_snapshot(), before)
+                        self.assertEqual(fixture.audit_rows(), audit_before)
+                        self.assertNotIn(sentinel, response.text)
+
+                revoked = fixture.client.post(
+                    f"/v1/provider-policy/grants/{grant_id}/revoke",
+                    headers=fixture.headers("admin-token"),
+                    json=revoke_request,
+                )
+                self.assertEqual(revoked.status_code, 200, revoked.text)
+                self.assertEqual(revoked.json()["resulting_revision"], 3)
+            finally:
+                logger.removeHandler(handler)
+                logger.setLevel(previous_level)
+
+            log_text = "\n".join(record.getMessage() for record in records)
+            for sentinel in forbidden_fields.values():
+                self.assertNotIn(sentinel, log_text)
+
     def test_durable_grant_and_revoke_change_authorization_without_rebuild(self) -> None:
         with _policy_client() as fixture:
             fixture.store.create_secret(
@@ -1279,6 +1378,33 @@ class _PolicyApiFixture:
                     "ORDER BY occurred_at, event_id"
                 ).fetchall()
             ]
+
+    def policy_state_snapshot(self) -> tuple[object, ...]:
+        import sqlite3
+        from contextlib import closing
+
+        with closing(sqlite3.connect(self.database)) as connection:
+            revision = connection.execute(
+                "SELECT provider_id, revision FROM provider_policy_state ORDER BY provider_id"
+            ).fetchall()
+            grants = connection.execute(
+                "SELECT grant_id, provider_id, subject, workspace_id, action, intent, "
+                "origin, granted_by, grant_correlation_id, revoked_by, "
+                "revoke_correlation_id, revoked_at FROM provider_grants "
+                "ORDER BY grant_id"
+            ).fetchall()
+            commands = connection.execute(
+                "SELECT provider_id, correlation_id, operation, subject, workspace_id, "
+                "action, intent, expected_revision, outcome, code, grant_id, "
+                "resulting_revision, actor FROM provider_policy_commands "
+                "ORDER BY provider_id, correlation_id"
+            ).fetchall()
+            events = connection.execute(
+                "SELECT event_id, provider_id, grant_id, subject, workspace_id, action, "
+                "intent, event_kind, actor, correlation_id, outcome, code "
+                "FROM provider_policy_events ORDER BY event_id"
+            ).fetchall()
+            return tuple(revision), tuple(grants), tuple(commands), tuple(events)
 
     def audit_rows(self) -> list[dict[str, object]]:
         return self.audit_store.rows_for_tests()
