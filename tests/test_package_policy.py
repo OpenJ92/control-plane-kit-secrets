@@ -136,6 +136,7 @@ for name in (
                 "crypto.py",
                 "custody.py",
                 "models.py",
+                "provider_policy.py",
                 "server.py",
                 "store.py",
             ],

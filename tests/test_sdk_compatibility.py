@@ -92,7 +92,7 @@ class SdkCompatibilityTests(unittest.TestCase):
             key_path.chmod(0o600)
             store, audit = admit_provider_custody(
                 base / "provider.sqlite3", master_key=load_master_key_file(key_path),
-                provider_id="compat-provider",
+                provider_id="compat-provider", credentials=(),
             )
             with patch.object(api, "install_cpk_wrapper", side_effect=observe_install):
                 app = api.create_app(control=configuration, initialize_provider=lambda: (store, audit, ()),
