@@ -1,17 +1,22 @@
 Source: [pyproject.toml](../../pyproject.toml).
 Maintain this document alongside its source file. When the source or relevant imported contracts change, verify and update this companion in the same change.
 
-This package metadata selects setuptools discovery under src, Python >=3.11, and includes the py.typed marker. Runtime dependencies explicitly select Core c7b16007467085be997f8dc3025e90e78649b00a from its commit archive/core subdirectory, SDK[fastapi] 3192360c36934feadc37bb9ae3733ce7da755c31 from its commit archive, and cryptography50.0.0. The selected SDK extra requires FastAPI0.141.1, Starlette1.6.0 and PyJWT2.13.0 with the same crypto version. This is an exact compatibility profile for those packages, not a complete transitive lockfile.
+This package metadata selects setuptools discovery under src, Python >=3.11, and includes the py.typed marker. Runtime dependencies explicitly select Core 7afef43f3d3b981094e37dcb3062b6e3a4f3d674 from its commit archive/core subdirectory, SDK[fastapi] 220f63169e4bac79653937e97727406255279f7b from its commit archive, and cryptography50.0.0. The selected SDK extra requires FastAPI0.141.1, Starlette1.6.0 and PyJWT2.13.0 with the same crypto version. This is an exact compatibility profile for those packages, not a complete transitive lockfile.
 
-Secrets #81 adopts accepted Core `c7b16007467085be997f8dc3025e90e78649b00a`
-and actual SDK #75 merge `3192360c36934feadc37bb9ae3733ce7da755c31`.
-Core adds only the pure provider-policy module and root exports; consumed
-receiver/wrapper/signing contracts remain unchanged. SDK runtime and extras
-are unchanged and select exactly the same Core archive. Existing installed
-provenance and real receiver/custody tests govern compatibility. This preserves
-main's three-value provider initializer and does not adopt Secrets E or its
-policy store. Interpreters #232 must wait for the actual accepted successor;
-preparation is not permission to merge main or evidence of live adoption.
+Secrets #83 adopts accepted Core `7afef43f3d3b981094e37dcb3062b6e3a4f3d674`
+and actual SDK #77 merge `220f63169e4bac79653937e97727406255279f7b`.
+Core changes only operations HTTP, parity and projection catalogues; consumed
+receiver/wrapper/signing contracts remain unchanged. The SDK successor changes
+only metadata, exact guards/provenance and current companions, and selects the
+identical Core archive. Existing installed provenance and real receiver/custody
+tests govern compatibility. This preserves main's three-value provider
+initializer and does not adopt Secrets E or its policy store. Interpreters #234
+must wait for the actual accepted successor; preparation and green evidence are
+not permission to merge main or evidence of live adoption.
+
+Historical Secrets #81 adopted Core `c7b16007467085be997f8dc3025e90e78649b00a`
+and SDK #75 merge `3192360c36934feadc37bb9ae3733ce7da755c31` for
+Interpreters #232. Its accepted evidence remains historical.
 
 Historical Secrets #77 adopts accepted Core `fec0816281aeb83ede98616adcc4f96dfe5777a8`
 and actual SDK #73 merge `cd4722fbfb942e7c2467a39b3cd0e32ded4a90ac`.
