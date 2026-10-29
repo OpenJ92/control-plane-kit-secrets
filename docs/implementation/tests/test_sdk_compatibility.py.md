@@ -3,15 +3,20 @@ Maintain this document alongside its source file. When the source or relevant im
 
 Three tests protect exact declared runtime/test requirements and Python metadata; installed Core/SDK commit-archive provenance plus selected framework/crypto versions; and actual SDK composition through the production required-control factory. Archive metadata identifies selected source, not a new independent cryptographic audit or complete transitive dependency lock. Read [pyproject.toml](../../../pyproject.toml) with the actual selected SDK metadata on adoption.
 
-Secrets #81 changes only the existing archive constants to accepted Core
-`c7b16007467085be997f8dc3025e90e78649b00a` and actual SDK #75 merge
-`3192360c36934feadc37bb9ae3733ce7da755c31`. The SDK selects the identical Core
-URL. The additive pure provider-policy module/root exports do not change
-the receiver/health contracts exercised here. Declaration, installed provenance,
-framework versions and actual SDK/provider authenticated/denied composition
-assertions are preserved. The owning pinned Docker gate must prove compatibility;
-no new test merely mirrors the pins. No E policy-aware fixture migration is
-included. Interpreters #232 consumes only the actual accepted Secrets successor.
+Secrets #83 changes only the existing archive constants to accepted Core
+`7afef43f3d3b981094e37dcb3062b6e3a4f3d674` and actual SDK #77 merge
+`220f63169e4bac79653937e97727406255279f7b`. The SDK selects the identical Core
+URL. Core's operations HTTP/parity/projection additions do not change the
+receiver/health contracts exercised here, and the SDK runtime is unchanged.
+Declaration, installed provenance, framework versions and actual SDK/provider
+authenticated/denied composition assertions are preserved. The owning pinned
+Docker gate must prove compatibility; no new test merely mirrors the pins. No E
+policy-aware fixture migration is included. Interpreters #234 consumes only the
+actual accepted Secrets successor.
+
+Historical Secrets #81 selected Core `c7b16007467085be997f8dc3025e90e78649b00a`
+and SDK #75 merge `3192360c36934feadc37bb9ae3733ce7da755c31` for
+Interpreters #232; its accepted assertions and evidence remain historical.
 
 Historical Secrets #77 changes only the existing archive constants to accepted Core
 `fec0816281aeb83ede98616adcc4f96dfe5777a8` and actual SDK #73 merge
