@@ -1,9 +1,19 @@
 Source: [pyproject.toml](../../pyproject.toml).
 Maintain this document alongside its source file. When the source or relevant imported contracts change, verify and update this companion in the same change.
 
-This package metadata selects setuptools discovery under src, Python >=3.11, and includes the py.typed marker. Runtime dependencies explicitly select Core fec0816281aeb83ede98616adcc4f96dfe5777a8 from its commit archive/core subdirectory, SDK[fastapi] cd4722fbfb942e7c2467a39b3cd0e32ded4a90ac from its commit archive, and cryptography50.0.0. The selected SDK extra requires FastAPI0.141.1, Starlette1.6.0 and PyJWT2.13.0 with the same crypto version. This is an exact compatibility profile for those packages, not a complete transitive lockfile.
+This package metadata selects setuptools discovery under src, Python >=3.11, and includes the py.typed marker. Runtime dependencies explicitly select Core c7b16007467085be997f8dc3025e90e78649b00a from its commit archive/core subdirectory, SDK[fastapi] 3192360c36934feadc37bb9ae3733ce7da755c31 from its commit archive, and cryptography50.0.0. The selected SDK extra requires FastAPI0.141.1, Starlette1.6.0 and PyJWT2.13.0 with the same crypto version. This is an exact compatibility profile for those packages, not a complete transitive lockfile.
 
-Secrets #77 adopts accepted Core `fec0816281aeb83ede98616adcc4f96dfe5777a8`
+Secrets #81 adopts accepted Core `c7b16007467085be997f8dc3025e90e78649b00a`
+and actual SDK #75 merge `3192360c36934feadc37bb9ae3733ce7da755c31`.
+Core adds only the pure provider-policy module and root exports; consumed
+receiver/wrapper/signing contracts remain unchanged. SDK runtime and extras
+are unchanged and select exactly the same Core archive. Existing installed
+provenance and real receiver/custody tests govern compatibility. This preserves
+main's three-value provider initializer and does not adopt Secrets E or its
+policy store. Interpreters #232 must wait for the actual accepted successor;
+preparation is not permission to merge main or evidence of live adoption.
+
+Historical Secrets #77 adopts accepted Core `fec0816281aeb83ede98616adcc4f96dfe5777a8`
 and actual SDK #73 merge `cd4722fbfb942e7c2467a39b3cd0e32ded4a90ac`.
 Core's production delta is confined to operations HTTP/parity/projections;
 the receiver configuration, wrapper, signed health and key contracts consumed
