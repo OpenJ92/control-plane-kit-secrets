@@ -1,9 +1,9 @@
 Source: [pyproject.toml](../../pyproject.toml).
 Maintain this document alongside its source file. When the source or relevant imported contracts change, verify and update this companion in the same change.
 
-This package metadata selects setuptools discovery under src, Python >=3.11, and includes the py.typed marker. Runtime dependencies explicitly select Core fec0816281aeb83ede98616adcc4f96dfe5777a8 from its commit archive/core subdirectory, SDK[fastapi] cd4722fbfb942e7c2467a39b3cd0e32ded4a90ac from its commit archive, and cryptography50.0.0. The selected SDK extra requires FastAPI0.141.1, Starlette1.6.0 and PyJWT2.13.0 with the same crypto version. This is an exact compatibility profile for those packages, not a complete transitive lockfile.
+This package metadata selects setuptools discovery under src, Python >=3.11, and includes the py.typed marker. Runtime dependencies explicitly select Core 7afef43f3d3b981094e37dcb3062b6e3a4f3d674 from its commit archive/core subdirectory, SDK[fastapi] 220f63169e4bac79653937e97727406255279f7b from its commit archive, and cryptography50.0.0. The selected SDK extra requires FastAPI0.141.1, Starlette1.6.0 and PyJWT2.13.0 with the same crypto version. This is an exact compatibility profile for those packages, not a complete transitive lockfile.
 
-Secrets #77 adopts accepted Core `fec0816281aeb83ede98616adcc4f96dfe5777a8`
+Historical Secrets #77 adopts accepted Core `fec0816281aeb83ede98616adcc4f96dfe5777a8`
 and actual SDK #73 merge `cd4722fbfb942e7c2467a39b3cd0e32ded4a90ac`.
 Core's production delta is confined to operations HTTP/parity/projections;
 the receiver configuration, wrapper, signed health and key contracts consumed
@@ -181,3 +181,13 @@ are its current dependency owners. Custody, schema, auth, routes, framework
 versions, test extras and the owning gate are unchanged. Acceptance provides
 Secrets* for Interpreters #186; it does not close full Servers #237 or establish
 receipt production, provider deployment or live acceptance.
+
+Secrets #85 aligns accepted E develop (#80) to Core
+`7afef43f3d3b981094e37dcb3062b6e3a4f3d674` and SDK
+`220f63169e4bac79653937e97727406255279f7b`, which selects the same Core archive.
+The accepted D custody seed/migration and E policy routes, four-value initializer,
+closed inputs, independent admin capability and current-policy enforcement remain
+unchanged. Framework/crypto versions, extras and runner are unchanged. Existing
+installed provenance and production composition tests plus the normal Docker
+suite establish package compatibility. The actual accepted develop successor
+feeds Servers #354, then #342; this does not promote main or prove live adoption.

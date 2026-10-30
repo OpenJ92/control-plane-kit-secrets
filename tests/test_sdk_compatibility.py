@@ -24,11 +24,11 @@ from control_plane_kit_secrets.provider_policy import ProviderPolicyStore
 REPO_ROOT = Path(__file__).parents[1]
 CORE_URL = (
     "https://github.com/OpenJ92/control-plane-kit/archive/"
-    "fec0816281aeb83ede98616adcc4f96dfe5777a8.zip"
+    "7afef43f3d3b981094e37dcb3062b6e3a4f3d674.zip"
 )
 SDK_URL = (
     "https://github.com/OpenJ92/control-plane-kit-server-sdk/archive/"
-    "cd4722fbfb942e7c2467a39b3cd0e32ded4a90ac.zip"
+    "220f63169e4bac79653937e97727406255279f7b.zip"
 )
 
 

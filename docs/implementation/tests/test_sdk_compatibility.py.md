@@ -3,7 +3,7 @@ Maintain this document alongside its source file. When the source or relevant im
 
 Three tests protect exact declared runtime/test requirements and Python metadata; installed Core/SDK commit-archive provenance plus selected framework/crypto versions; and actual SDK composition through the production required-control factory. Archive metadata identifies selected source, not a new independent cryptographic audit or complete transitive dependency lock. Read [pyproject.toml](../../../pyproject.toml) with the actual selected SDK metadata on adoption.
 
-Secrets #77 changes only the existing archive constants to accepted Core
+Historical Secrets #77 changes only the existing archive constants to accepted Core
 `fec0816281aeb83ede98616adcc4f96dfe5777a8` and actual SDK #73 merge
 `cd4722fbfb942e7c2467a39b3cd0e32ded4a90ac`. The SDK selects the same Core URL.
 Core's added product-directory HTTP/parity/projection read contracts do not change
@@ -149,3 +149,13 @@ and audit assertions remain intact. This mechanical pin-only update introduces
 no behavior requiring an artificial red test; the unchanged owner gate proves
 normal dependency resolution and compatibility without an override. No provider
 truth or broader #237 completion is inferred from package acceptance.
+
+Secrets #85 updates only the two existing archive constants to Core
+`7afef43f3d3b981094e37dcb3062b6e3a4f3d674` and SDK
+`220f63169e4bac79653937e97727406255279f7b`. Existing exact declaration,
+installed provenance, SDK composition, denial and audit assertions are preserved.
+The accepted E fixture already seeds explicit empty credentials through normal
+custody and returns the real provider-bound policy store as the fourth initializer
+value. No runtime or fixture changes, artificial behavioral red, resolver bypass
+or new pin-mirroring tests are needed. The unchanged owning Docker gate validates
+compatibility; Servers #354 owns downstream adoption and #342 owns process proof.
