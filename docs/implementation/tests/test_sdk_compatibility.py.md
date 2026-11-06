@@ -159,3 +159,5 @@ custody and returns the real provider-bound policy store as the fourth initializ
 value. No runtime or fixture changes, artificial behavioral red, resolver bypass
 or new pin-mirroring tests are needed. The unchanged owning Docker gate validates
 compatibility; Servers #354 owns downstream adoption and #342 owns process proof.
+
+Secrets #87 updates only current exact declaration/installed-provenance expectations to Core976901c and SDKd61b374c. Existing rejection, framework/crypto and actual factory assertions remain. Historical adoption accounts above remain historical; no new preflight/runner or product pin is introduced.

@@ -27,3 +27,5 @@ resolve/write/rotate admit it only under their unchanged credential grants.
 No endpoint, request/response schema, wildcard rule, audit or transaction
 behavior changes. Wrong durable intent still requires metadata inspection and
 denial audit but must not decrypt or commit a new resolution selection.
+
+Secrets #87 adds optional typed http_verification_binding and independent http_sample_clock. The existing sole install_cpk_wrapper receives them before the unchanged initializer call. SDK owns actual key/binding/route/probe admission; Secrets does not duplicate it or construct a check/port. Wrong or cross-wired binding refuses before private input/custody. None preserves the old route family. Public ordinary readiness and provider route semantics are unchanged; no second wrapper or initializer is installed.

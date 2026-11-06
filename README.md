@@ -342,3 +342,29 @@ The integrity stage fails closed on hidden unittest collection, unapproved
 skips, placeholder tests, swallowed exceptions, mutable legacy imports,
 pytest, and proof-changing optional modes. It reports mock use as review
 evidence without treating every mock as a failure.
+
+### Product composition without eager initialization
+
+`control_plane_kit_secrets.application.app_from_environment` is the import-safe
+factory for a product launcher. Importing it creates no application and reads no
+private input. The supported `control_plane_kit_secrets.server:app` entrypoint
+continues to delegate to that factory once.
+
+A product may pass one independently loaded `control` V2 snapshot and an optional
+`http_verification_binding`. The product owns the original check, named socket,
+port and companion delivery; Secrets defines none of them. With no supplied
+control, the factory reads its existing configured control file once. The SDK
+validates the optional binding and installs routes before the existing private
+initializer executes exactly once. Public control or SDK setup failure returns no app without starting private
+initialization. `clock` retains the integer verifier contract;
+`http_sample_clock` is a separate precise clock for sample deadlines. No binding
+preserves ordinary provider readiness, authentication and control behavior.
+
+This source API does not select a product image, install an entrypoint, publish
+an image or enable a running installation.
+
+If a custom environment mapping is supplied, its sample-companion setting must
+match process environment in both presence and path. The SDK remains the one
+companion reader; this factory refuses a divergent setting before private work
+and never changes process environment. A direct binding remains supported when
+both omit the companion file.
