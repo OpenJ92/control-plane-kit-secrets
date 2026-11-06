@@ -9,6 +9,7 @@ import control_plane_kit_core as core
 from control_plane_kit_core.receiver_configuration import (
     ReceiverNodeControlConfiguration, ReceiverNodeControlConfigurationCodec,
 )
+from control_plane_kit_core.http_verification_sample_installation import HttpVerificationSampleReceiverBinding
 from control_plane_kit_core.wrapper_configuration import (
     MAX_WRAPPER_CONFIGURATION_BYTES, WORKLOAD_NODE_CONTROL_CONFIGURATION_ENVIRONMENT,
 )

@@ -127,6 +127,7 @@ for name in (
                 "__init__.py",
                 "_delegation_signing.py",
                 "api.py",
+                "application.py",
                 "audit.py",
                 "auth.py",
                 "bootstrap.py",

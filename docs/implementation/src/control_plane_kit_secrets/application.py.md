@@ -1,0 +1,8 @@
+Source: [src/control_plane_kit_secrets/application.py](../../../../src/control_plane_kit_secrets/application.py).
+Maintain this document alongside its source and relevant imported contracts.
+
+Secrets #87 moves the existing environment factory out of the eager ASGI entrypoint without creating an app or reading public/private files at import. It retains the database/provider settings and the one private initialization closure: load master key and provider credentials, admit custody, construct policy store, return those facts to the required-control API factory. There is no new custody, migration, retry or rollback owner.
+
+A trusted product may supply one independently loaded ReceiverNodeControlConfiguration snapshot plus an optional Core HttpVerificationSampleReceiverBinding. Otherwise the existing bounded public file reader runs once. The supplied snapshot still passes the existing Secrets declaration/codec admission. Binding identity never supplies that control or the original check/port. The API forwards it to the sole SDK installation before calling the private initializer; failure returns no app. Clock remains the integer legacy verifier clock; http_sample_clock is independently precise. This module defines no product metadata, sample-file selector, network probe or Servers import. The supported server module re-exports this callable and constructs its ordinary app once.
+
+Package acceptance is not product-entrypoint/image adoption. Servers owns companion delivery, original HttpCheck/socket/port, actual product listener composition and qualification. Private values and credential-derived hashes never belong in evidence.

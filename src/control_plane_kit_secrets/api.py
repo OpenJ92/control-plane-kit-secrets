@@ -52,6 +52,7 @@ from .provider_policy import (
 from .store import EncryptedSecretStore
 from .control import (
     ReceiverNodeControlConfiguration,
+    HttpVerificationSampleReceiverBinding,
     require_secrets_control_configuration,
 )
 
@@ -141,6 +142,8 @@ def create_app(
     initialize_provider: ProviderInitializer,
     provider_id: str = "local-dev-provider",
     clock: Callable[[], int] = lambda: int(time.time()),
+    http_verification_binding: HttpVerificationSampleReceiverBinding | None = None,
+    http_sample_clock: Callable[[], float] | None = None,
 ) -> FastAPI:
     control = require_secrets_control_configuration(control)
     app = FastAPI(title="control-plane-kit-secrets")
@@ -1060,7 +1063,8 @@ def create_app(
         except ProviderPolicyUnavailable as exc:
             raise _error(503, "unavailable", "provider-policy-unavailable") from exc
 
-    install_cpk_wrapper(app, configuration=control, clock=clock)
+    install_cpk_wrapper(app, configuration=control, clock=clock,
+        http_verification_binding=http_verification_binding, http_sample_clock=http_sample_clock)
     # Complete host admission precedes the single protected/durable effect.
     # All handler closures are bound before this app can be returned or served.
     store, audit_store, credentials, policy_store = initialize_provider()

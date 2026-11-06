@@ -7,3 +7,5 @@ The [initial inventory](inventory.json) accounts for 31 original tracked paths: 
 Keep maintenance in the existing PR flow: inspect the actual source/dependency diff, pair relevant creates/moves/removals, and update affected meaning. If unchanged, record “companion reviewed; no semantic update needed” in the normal decision log. Bring newly touched pending files current. Verify selected dependency versions and coordinate actual adoption across repositories; reverse links are not exhaustive.
 
 No per-file timestamp/hash churn, extra report or new validation programme is required. Review consequential claims against source. Documentation coverage does not establish provider outcomes, resolve uncertainty, or grant authority to execute effects.
+
+Secrets #87 adds the import-safe application.py environment factory and retains server.py as its eager supported delegate. Read their companions with api.py/control.py for optional sample-binding startup order. SDKd61/Core976 are source dependency adoption only; product check/port and image/installation selection stay with Servers. Existing owner Docker evidence and review belong to #87, not this index.
