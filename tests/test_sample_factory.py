@@ -220,3 +220,75 @@ class SampleFactoryTests(unittest.TestCase):
                 self.assertEqual(compose.call_count, 1)
         finally:
             sys.modules.pop(name, None)
+
+    def test_explicit_environment_cannot_hide_or_redirect_the_sdk_companion(self):
+        from control_plane_kit_secrets import application, bootstrap
+        from control_plane_kit_core.http_verification_sample_installation import (
+            HTTP_VERIFICATION_SAMPLES_CONFIGURATION_ENVIRONMENT as companion,
+        )
+        fixture = FactoryFixture()
+        for mapped, process in (("mapped", None), (None, "process"), ("mapped", "process")):
+            for binding in (None, fixture.binding):
+                with self.subTest(mapped=mapped, process=process, bound=binding is not None), \
+                     private_fixture() as (base, environment):
+                    if mapped is not None:
+                        environment[companion] = str(base / mapped)
+                    process_environment = {} if process is None else {companion: str(base / process)}
+                    calls = []
+                    def forbidden(*args, **kwargs):
+                        calls.append("private")
+                        raise AssertionError("divergent companion reached private initialization")
+                    with patch.dict(os.environ, process_environment, clear=True), \
+                         patch.object(crypto, "load_master_key_from_environment", side_effect=forbidden), \
+                         patch.object(bootstrap, "load_provider_credentials", side_effect=forbidden), \
+                         patch.object(application, "admit_provider_custody", side_effect=forbidden):
+                        with self.assertRaises(bootstrap.ProviderConfigurationError):
+                            application.app_from_environment(environment, control=fixture.control,
+                                http_verification_binding=binding)
+                        self.assertEqual(dict(os.environ), process_environment)
+                    self.assertEqual(calls, [])
+                    self.assertFalse((base / "custody").exists())
+
+    def test_matching_companion_path_uses_sdk_admission_before_private_work(self):
+        from dataclasses import replace
+        from control_plane_kit_secrets import application, bootstrap
+        from control_plane_kit_core.http_verification_sample_installation import (
+            HTTP_VERIFICATION_SAMPLES_CONFIGURATION_ENVIRONMENT as companion,
+            HttpVerificationSampleReceiverConfigurationCodec,
+        )
+        fixture = FactoryFixture()
+        codec = HttpVerificationSampleReceiverConfigurationCodec()
+        for mode in ("missing", "malformed", "different-binding", "no-binding", "valid"):
+            with self.subTest(mode=mode), private_fixture() as (base, environment):
+                path = base / "samples.json"
+                environment[companion] = str(path)
+                if mode != "missing":
+                    configuration = fixture.binding.configuration
+                    if mode == "different-binding":
+                        configuration = replace(configuration, verifier=replace(configuration.verifier, issuer="other-controller"))
+                    path.write_bytes(b"invalid" if mode == "malformed" else codec.encode_canonical_bytes(configuration))
+                    path.chmod(0o444)
+                calls = []
+                def custody(*args, **kwargs):
+                    calls.append("custody")
+                    return admit_provider_custody(*args, **kwargs)
+                def forbidden(*args, **kwargs):
+                    calls.append("private")
+                    raise AssertionError("invalid companion reached private initialization")
+                with patch.dict(os.environ, {companion: str(path)}, clear=True):
+                    if mode == "valid":
+                        with patch.object(application, "admit_provider_custody", side_effect=custody):
+                            app = application.app_from_environment(environment, control=fixture.control,
+                                http_verification_binding=fixture.binding)
+                        self.assertIn("/__control/verification/http", {route.path for route in app.routes})
+                        self.assertEqual(calls, ["custody"])
+                        self.assertTrue((base / "custody" / "provider.sqlite3").is_file())
+                    else:
+                        with patch.object(crypto, "load_master_key_from_environment", side_effect=forbidden), \
+                             patch.object(bootstrap, "load_provider_credentials", side_effect=forbidden), \
+                             patch.object(application, "admit_provider_custody", side_effect=forbidden):
+                            with self.assertRaises(ValueError):
+                                application.app_from_environment(environment, control=fixture.control,
+                                    http_verification_binding=None if mode == "no-binding" else fixture.binding)
+                        self.assertEqual(calls, [])
+                        self.assertFalse((base / "custody").exists())

@@ -12,6 +12,7 @@ from .custody import admit_provider_custody
 from .provider_policy import ProviderPolicyStore
 from .control import (
     ReceiverNodeControlConfiguration, HttpVerificationSampleReceiverBinding,
+    HTTP_VERIFICATION_SAMPLES_CONFIGURATION_ENVIRONMENT,
     read_secrets_control_configuration, require_secrets_control_configuration,
 )
 
@@ -25,6 +26,14 @@ def app_from_environment(
 ) -> object:
     """Compose one provider; callers may supply one independent public snapshot."""
     source = os.environ if environment is None else environment
+    companion = HTTP_VERIFICATION_SAMPLES_CONFIGURATION_ENVIRONMENT
+    if environment is not None and (
+        (companion in source) != (companion in os.environ)
+        or source.get(companion) != os.environ.get(companion)
+    ):
+        # SDK owns the single companion reader and uses process environment.
+        # An explicit mapping must not hide or redirect that delivered opt-in.
+        raise ProviderConfigurationError()
     database_path = source.get("CPK_SECRETS_DATABASE_PATH")
     provider_id = source.get("CPK_SECRETS_PROVIDER_ID", "local-dev-provider")
     if not database_path:

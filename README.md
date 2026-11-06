@@ -362,3 +362,9 @@ preserves ordinary provider readiness, authentication and control behavior.
 
 This source API does not select a product image, install an entrypoint, publish
 an image or enable a running installation.
+
+If a custom environment mapping is supplied, its sample-companion setting must
+match process environment in both presence and path. The SDK remains the one
+companion reader; this factory refuses a divergent setting before private work
+and never changes process environment. A direct binding remains supported when
+both omit the companion file.

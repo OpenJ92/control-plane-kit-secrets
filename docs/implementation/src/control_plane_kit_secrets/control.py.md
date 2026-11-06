@@ -8,3 +8,5 @@ The process selects only CPK_WRAPPER_CONFIGURATION_FILE. The existing explicit e
 API owns actual SDK wrapper installation and complete host collision admission before the unchanged private initializer. No custom baseline callback, provider auth/store/audit read, readiness or command capability is introduced. Public keys remain separate from private custody. Servers237 owns coordinated product artifact delivery. Old setting-only input fails; an obsolete setting is ignored when the sole common selector is supplied.
 
 Secrets #87 also imports/re-exports the Core HttpVerificationSampleReceiverBinding type for the optional factory signature. This remains the sole direct Core protocol import owner; no sample codec, metadata definition or validation algorithm is copied here.
+
+The companion environment-name constant is re-exported with the binding type for the factory's narrow source-equality guard. Actual file admission remains in the SDK.
