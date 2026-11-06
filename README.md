@@ -355,8 +355,8 @@ A product may pass one independently loaded `control` V2 snapshot and an optiona
 port and companion delivery; Secrets defines none of them. With no supplied
 control, the factory reads its existing configured control file once. The SDK
 validates the optional binding and installs routes before the existing private
-initializer executes exactly once. Setup failure returns no app and does not
-start private initialization. `clock` retains the integer verifier contract;
+initializer executes exactly once. Public control or SDK setup failure returns no app without starting private
+initialization. `clock` retains the integer verifier contract;
 `http_sample_clock` is a separate precise clock for sample deadlines. No binding
 preserves ordinary provider readiness, authentication and control behavior.
 
