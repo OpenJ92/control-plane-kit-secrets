@@ -19,6 +19,7 @@ from control_plane_kit_secrets import api, bootstrap, crypto
 from control_plane_kit_secrets.audit import SqliteAuditStore
 from control_plane_kit_secrets.auth import ProviderAuthorizer
 from control_plane_kit_secrets.custody import admit_provider_custody
+from control_plane_kit_secrets.provider_policy import ProviderPolicyStore
 from control_plane_kit_secrets.store import EncryptedSecretStore
 from control_fixtures import ControlAuthority
 
@@ -120,8 +121,11 @@ class ControlReceiverTests(unittest.TestCase):
                 self.assertEqual(child_scope["path_params"], {"health_kind": "liveness"})
                 self.assertFalse(database.parent.exists())
                 stores = admit_provider_custody(database, master_key=crypto.load_master_key_file(key_path),
-                                               provider_id="initializer-test")
-                return stores[0], stores[1], ()
+                                               provider_id="initializer-test", credentials=())
+                return (
+                    stores[0], stores[1], (),
+                    ProviderPolicyStore(database, provider_id="initializer-test"),
+                )
 
             with patch.object(api, "FastAPI", return_value=app):
                 result = api.create_app(control=authority.configuration(receiver),
@@ -155,9 +159,15 @@ class ControlReceiverTests(unittest.TestCase):
             key_path.write_text(crypto.encode_master_key_for_file(os.urandom(32)))
             key_path.chmod(0o600)
             store, audit = admit_provider_custody(base / "provider.sqlite3",
-                master_key=crypto.load_master_key_file(key_path), provider_id="read-test")
+                master_key=crypto.load_master_key_file(key_path), provider_id="read-test",
+                credentials=())
             app = api.create_app(control=first.configuration(receiver),
-                                 initialize_provider=lambda: (store, audit, ()), clock=lambda: 150)
+                                 initialize_provider=lambda: (
+                                     store, audit, (),
+                                     ProviderPolicyStore(
+                                         base / "provider.sqlite3", provider_id="read-test"
+                                     ),
+                                 ), clock=lambda: 150)
             request, static = first.signed_read(static=True)
             health_request, health = first.signed_read()
             _, foreign = other.signed_read()

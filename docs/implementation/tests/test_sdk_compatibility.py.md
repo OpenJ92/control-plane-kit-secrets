@@ -3,21 +3,6 @@ Maintain this document alongside its source file. When the source or relevant im
 
 Three tests protect exact declared runtime/test requirements and Python metadata; installed Core/SDK commit-archive provenance plus selected framework/crypto versions; and actual SDK composition through the production required-control factory. Archive metadata identifies selected source, not a new independent cryptographic audit or complete transitive dependency lock. Read [pyproject.toml](../../../pyproject.toml) with the actual selected SDK metadata on adoption.
 
-Secrets #83 changes only the existing archive constants to accepted Core
-`7afef43f3d3b981094e37dcb3062b6e3a4f3d674` and actual SDK #77 merge
-`220f63169e4bac79653937e97727406255279f7b`. The SDK selects the identical Core
-URL. Core's operations HTTP/parity/projection additions do not change the
-receiver/health contracts exercised here, and the SDK runtime is unchanged.
-Declaration, installed provenance, framework versions and actual SDK/provider
-authenticated/denied composition assertions are preserved. The owning pinned
-Docker gate must prove compatibility; no new test merely mirrors the pins. No E
-policy-aware fixture migration is included. Interpreters #234 consumes only the
-actual accepted Secrets successor.
-
-Historical Secrets #81 selected Core `c7b16007467085be997f8dc3025e90e78649b00a`
-and SDK #75 merge `3192360c36934feadc37bb9ae3733ce7da755c31` for
-Interpreters #232; its accepted assertions and evidence remain historical.
-
 Historical Secrets #77 changes only the existing archive constants to accepted Core
 `fec0816281aeb83ede98616adcc4f96dfe5777a8` and actual SDK #73 merge
 `cd4722fbfb942e7c2467a39b3cd0e32ded4a90ac`. The SDK selects the same Core URL.
@@ -102,7 +87,7 @@ receiver/signing contracts and actual Secrets composition remain unchanged.
 After normal gate validation and North acceptance, Interpreters selects the
 accepted Secrets successor. No published artifact rebuild follows from this pin.
 
-The composition fixture uses real temporary SQLite custody and [api.create_app](../../../src/control_plane_kit_secrets/api.py), with required synthetic public control, an initializer returning the existing stores/empty credentials and actual production-prepared SDK verifiers. A forwarding observer records the complete pre-install route/schema and wraps the real liveness callback to count observations, then calls the actual SDK installer exactly once. It introduces no alternative dispatcher semantics or second installation. Assertions retain the canonical static response, typed signed liveness, missing/wrong-purpose denial, one observation and no audit rows. It regenerates OpenAPI after installation before full schema comparison, so the pre-install cache cannot stand in for proof. Legacy health/docs and provider authentication denial remain observable.
+The composition fixture uses real temporary SQLite custody and [api.create_app](../../../src/control_plane_kit_secrets/api.py), with required synthetic public control, an initializer returning the existing stores, empty credentials, durable policy store and actual production-prepared SDK verifiers. A forwarding observer records the complete pre-install route/schema and wraps the real liveness callback to count observations, then calls the actual SDK installer exactly once. It introduces no alternative dispatcher semantics or second installation. SDK routes perform no provider-policy authorization or audit work. Assertions retain the canonical static response, typed signed liveness, missing/wrong-purpose denial, one observation and no audit rows. It regenerates OpenAPI after installation before full schema comparison, so the pre-install cache cannot stand in for proof. Legacy health/docs and provider authentication denial remain observable.
 
 The temporary master-key file is0600; generated authority is local to the existing test container, with no credential material or derived hashes in evidence. This now exercises production receiving composition, but preinitialized stores do not establish startup effect ordering or public artifact delivery. [test_control_receiver.py](../../../tests/test_control_receiver.py) owns explicit ordering/authority laws; existing signing/custody/auth/bootstrap/restart tests remain the wider compatibility context. Run only the owning [test.sh](../../../test.sh) after its approved preflight, and report executable results separately from this description.
 
@@ -164,3 +149,15 @@ and audit assertions remain intact. This mechanical pin-only update introduces
 no behavior requiring an artificial red test; the unchanged owner gate proves
 normal dependency resolution and compatibility without an override. No provider
 truth or broader #237 completion is inferred from package acceptance.
+
+Secrets #85 updates only the two existing archive constants to Core
+`7afef43f3d3b981094e37dcb3062b6e3a4f3d674` and SDK
+`220f63169e4bac79653937e97727406255279f7b`. Existing exact declaration,
+installed provenance, SDK composition, denial and audit assertions are preserved.
+The accepted E fixture already seeds explicit empty credentials through normal
+custody and returns the real provider-bound policy store as the fourth initializer
+value. No runtime or fixture changes, artificial behavioral red, resolver bypass
+or new pin-mirroring tests are needed. The unchanged owning Docker gate validates
+compatibility; Servers #354 owns downstream adoption and #342 owns process proof.
+
+Secrets #87 updates only current exact declaration/installed-provenance expectations to Core976901c and SDKd61b374c. Existing rejection, framework/crypto and actual factory assertions remain. Historical adoption accounts above remain historical; no new preflight/runner or product pin is introduced.

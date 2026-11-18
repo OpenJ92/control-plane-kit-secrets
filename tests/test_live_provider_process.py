@@ -99,10 +99,14 @@ class LiveProviderProcessTests(unittest.TestCase):
                             "subject": "provider-client",
                             "token": token,
                             "grants": [
-                                {"action": "secret.write", "workspace_id": "workspace-1"},
-                                {"action": "secret.rotate", "workspace_id": "workspace-1"},
-                                {"action": "secret.revoke", "workspace_id": "workspace-1"},
-                                {"action": "secret.metadata", "workspace_id": "workspace-1"},
+                                {"action": "secret.write", "workspace_id": "workspace-1",
+                                 "intents": ["postgres.password"]},
+                                {"action": "secret.rotate", "workspace_id": "workspace-1",
+                                 "intents": ["postgres.password"]},
+                                {"action": "secret.revoke", "workspace_id": "workspace-1",
+                                 "intents": []},
+                                {"action": "secret.metadata", "workspace_id": "workspace-1",
+                                 "intents": []},
                                 {
                                     "action": "secret.resolve",
                                     "workspace_id": "workspace-1",
@@ -114,7 +118,8 @@ class LiveProviderProcessTests(unittest.TestCase):
                             "subject": "metadata-only",
                             "token": denied_token,
                             "grants": [
-                                {"action": "secret.metadata", "workspace_id": "workspace-1"},
+                                {"action": "secret.metadata", "workspace_id": "workspace-1",
+                                 "intents": []},
                             ],
                         },
                     ],

@@ -18,16 +18,17 @@ from control_plane_kit_secrets import api, control
 from control_fixtures import ControlAuthority
 from control_plane_kit_secrets.crypto import encode_master_key_for_file, load_master_key_file
 from control_plane_kit_secrets.custody import admit_provider_custody
+from control_plane_kit_secrets.provider_policy import ProviderPolicyStore
 
 
 REPO_ROOT = Path(__file__).parents[1]
 CORE_URL = (
     "https://github.com/OpenJ92/control-plane-kit/archive/"
-    "7afef43f3d3b981094e37dcb3062b6e3a4f3d674.zip"
+    "68f187710abe8fa89701f403ac76e904b3fec35d.zip"
 )
 SDK_URL = (
     "https://github.com/OpenJ92/control-plane-kit-server-sdk/archive/"
-    "220f63169e4bac79653937e97727406255279f7b.zip"
+    "b988030bd5931a7f6a3aef6d1a66a43ba817f7e8.zip"
 )
 
 
@@ -92,10 +93,15 @@ class SdkCompatibilityTests(unittest.TestCase):
             key_path.chmod(0o600)
             store, audit = admit_provider_custody(
                 base / "provider.sqlite3", master_key=load_master_key_file(key_path),
-                provider_id="compat-provider",
+                provider_id="compat-provider", credentials=(),
             )
             with patch.object(api, "install_cpk_wrapper", side_effect=observe_install):
-                app = api.create_app(control=configuration, initialize_provider=lambda: (store, audit, ()),
+                app = api.create_app(control=configuration, initialize_provider=lambda: (
+                    store, audit, (),
+                    ProviderPolicyStore(
+                        base / "provider.sqlite3", provider_id="compat-provider"
+                    ),
+                ),
                                      provider_id="compat-provider", clock=lambda: 150)
             self.assertEqual(len(snapshots), 1)
             prior_routes, prior_schema = snapshots[0]

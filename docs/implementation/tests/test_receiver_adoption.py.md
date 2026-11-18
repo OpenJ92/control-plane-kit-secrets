@@ -8,3 +8,5 @@ Downstream assertions cover common-only path selection; generic Core-valid readi
 The context read test supplies opaque unused store sentinels and patches provider operations to fail if reached. Real initialization/custody/restart laws remain in existing receiver/process tests. No readiness, command or provider permission follows from the shared SDK. No new output exposes tokens/private material; test assertions compare categorical statuses and public protocol results. Each target checkpoint must report reached versus unreached assertions, independently of prior package green.
 
 At source adoption the Core decode+roundtrip prerequisite is now before the Secrets call, as released. The independent raw builder retains its exact target-checkpoint hash. Its successful execution must validate the conditional red premise before downstream acceptance is claimed. No new law or builder repair was introduced after target-red.
+
+#71 supplies the durable policy store in receiver composition fixtures. Shared receiver verification remains independent from provider secret-use and policy-admin authority.

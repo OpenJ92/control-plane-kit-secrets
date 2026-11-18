@@ -1,0 +1,8 @@
+Source: [tests/test_sample_factory.py](../../../tests/test_sample_factory.py).
+Maintain this document alongside its source and relevant imported contracts.
+
+The first Secrets #87 law exercises the existing required-control factory with an independently supplied Core sample binding. It requires actual SDK route installation before the existing initializer, exactly one provider initialization, and unchanged ordinary ready behavior. Disposable private test inputs stay inside the ordinary owning Docker gate; no product definition or public credential fixture is created. The intended first failure is missing optional factory behavior, not import/collection failure.
+
+The completed candidate also checks import-safe composition, supported server:app delegation, supplied/file-backed control with one snapshot (the fixture removes the file after its first read), one real key/credential/custody sequence, ordinary absent-binding behavior, same-audience foreign receiver and different declaration refusal before private work, malformed binding refusal, and once-only initializer failure without an app. Generic Secrets tests deliberately do not claim product image/listener sampling; that witness belongs to Servers.
+
+The environment-source regression covers mapping-only, process-only and divergent-path companions, each with and without a binding, requiring zero private calls/no custody and unchanged process environment. Matching-path cases delegate to actual SDK admission for missing/malformed/different companion or absent binding; a matching valid file/binding permits exactly one real custody initialization. Earlier no-file/direct-binding coverage remains.

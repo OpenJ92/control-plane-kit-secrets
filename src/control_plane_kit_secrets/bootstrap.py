@@ -11,6 +11,7 @@ from .bootstrap_files import (
 
 
 _MAXIMUM_CREDENTIAL_FILE_BYTES = 64 * 1024
+_ALLOWED_CAPABILITIES = frozenset({"secrets.policy-admin"})
 
 
 class ProviderConfigurationError(Exception):
@@ -71,10 +72,19 @@ def _unique_object(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
 def _credential_from_mapping(item: Any) -> ProviderCredential:
     if not isinstance(item, dict):
         raise ValueError
-    if item.keys() - {"subject", "token", "grants"}:
+    if item.keys() - {"subject", "token", "grants", "capabilities"}:
         raise ValueError
     grants = item.get("grants", [])
     if not isinstance(grants, list):
+        raise ValueError
+    capabilities = item.get("capabilities", [])
+    if not isinstance(capabilities, list):
+        raise ValueError
+    normalized_capabilities = tuple(_text(value) for value in capabilities)
+    if (
+        len(set(normalized_capabilities)) != len(normalized_capabilities)
+        or any(value not in _ALLOWED_CAPABILITIES for value in normalized_capabilities)
+    ):
         raise ValueError
     token = _text(item["token"])
     if not token.isascii() or token != token.strip():
@@ -83,6 +93,7 @@ def _credential_from_mapping(item: Any) -> ProviderCredential:
         subject=_text(item["subject"]),
         token=token,
         grants=tuple(_grant_from_mapping(grant) for grant in grants),
+        capabilities=normalized_capabilities,
     )
 
 
